@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "CryptoTrace Guard",
+  "version": "0.1.0",
+  "description": "Real-time crypto wallet address safety check against the CryptoTrace fraud registry. Hard-warns before you send funds.",
+  "permissions": ["storage", "clipboardRead", "activeTab"],
+  "host_permissions": ["https://*/*", "http://*/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*", "http://*/*"],
+      "js": ["content.js"],
+      "css": ["warn.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "CryptoTrace Guard",
+    "default_popup": "popup.html"
+  },
+  "icons": {}
+}

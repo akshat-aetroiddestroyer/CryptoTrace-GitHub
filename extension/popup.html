@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CryptoTrace Guard</title>
+  <style>
+    body {
+      width: 320px;
+      margin: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-size: 13px;
+    }
+    header {
+      padding: 12px 14px;
+      border-bottom: 1px solid #334155;
+      background: #020617;
+    }
+    header strong { color: #38bdf8; }
+    main { padding: 12px 14px; }
+    .hit {
+      border: 1px solid #475569;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      background: #1e293b;
+    }
+    .hit.high { border-color: #dc2626; }
+    .mono { font-family: ui-monospace, monospace; font-size: 11px; word-break: break-all; }
+    .muted { color: #94a3b8; font-size: 11px; }
+    footer {
+      padding: 10px 14px;
+      border-top: 1px solid #334155;
+      font-size: 11px;
+      color: #64748b;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>CryptoTrace Guard</strong>
+    <div class="muted">Real-time address safety · SIH 2026</div>
+  </header>
+  <main>
+    <p class="muted" id="status">Loading recent hits…</p>
+    <div id="list"></div>
+  </main>
+  <footer>
+    Never shares seed phrases. Helpline: 1930 · cybercrime.gov.in
+  </footer>
+  <script>
+    chrome.runtime.sendMessage({ type: 'CT_GET_HITS' }, (res) => {
+      const list = document.getElementById('list');
+      const status = document.getElementById('status');
+      const hits = (res && res.hits) || [];
+      if (!hits.length) {
+        status.textContent = 'No flagged addresses on this session yet.';
+        return;
+      }
+      status.textContent = hits.length + ' recent registry hit(s)';
+      list.innerHTML = hits
+        .map((h) => {
+          const high = h.hit && h.hit.score >= 80;
+          return (
+            '<div class="hit ' +
+            (high ? 'high' : '') +
+            '"><div class="mono">' +
+            h.address +
+            '</div><div>Risk ' +
+            (h.hit && h.hit.score) +
+            '/100 · ' +
+            (h.hit && h.hit.types) +
+            '</div><div class="muted">' +
+            h.at +
+            '</div></div>'
+          );
+        })
+        .join('');
+    });
+  </script>
+</body>
+</html>

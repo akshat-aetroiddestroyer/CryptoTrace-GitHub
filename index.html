@@ -1,0 +1,1631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CryptoTrace — AI Crypto Fraud Attribution</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            serif: ['Georgia', 'Cambria', 'serif'],
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+          },
+          colors: {
+            primary: { DEFAULT: '#1e3a5f', foreground: '#f8fafc' },
+            sidebar: { DEFAULT: '#0f172a', foreground: '#e2e8f0', accent: '#1e293b', border: '#334155', primary: '#f59e0b' },
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; }
+    .page { display: none; }
+    .page.active { display: block; }
+    .nav-link.active { background: #1e293b; color: #f8fafc; }
+    mark.addr { background: #fde68a; padding: 0 .25rem; border-radius: 3px; font-family: ui-monospace, monospace; font-size: 12px; }
+    #live-graph { background: radial-gradient(ellipse at center, #0f172a 0%, #020617 70%); }
+    .tx-row:hover { background: #f8fafc; }
+    @keyframes dash-flow { to { stroke-dashoffset: -24; } }
+    .edge-flow { stroke-dasharray: 6 6; animation: dash-flow 0.8s linear infinite; }
+    .hero-grid {
+      background-color: #020617;
+      background-image:
+        linear-gradient(rgba(56,189,248,0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(56,189,248,0.06) 1px, transparent 1px);
+      background-size: 32px 32px;
+    }
+    .card-glow:hover { transform: translateY(-3px); box-shadow: 0 12px 40px rgba(15,23,42,0.18); }
+    .card-glow { transition: transform .2s ease, box-shadow .2s ease; }
+    .chip { font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+    #chat-fab {
+      position: fixed; bottom: 24px; right: 24px; z-index: 60;
+      width: 60px; height: 60px; border-radius: 9999px;
+      background: linear-gradient(135deg, #0ea5e9, #1e3a5f);
+      color: white; border: none; cursor: pointer;
+      box-shadow: 0 8px 28px rgba(14,165,233,0.45);
+      display: flex; align-items: center; justify-content: center;
+      transition: transform .15s ease;
+    }
+    #chat-fab:hover { transform: scale(1.06); }
+    #chat-panel {
+      position: fixed; bottom: 96px; right: 24px; z-index: 60;
+      width: min(400px, calc(100vw - 32px)); height: min(560px, calc(100vh - 140px));
+      background: #0f172a; color: #e2e8f0; border-radius: 16px;
+      border: 1px solid rgba(148,163,184,0.25);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+      display: none; flex-direction: column; overflow: hidden;
+    }
+    #chat-panel.open { display: flex; }
+    #chat-messages { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+    .chat-bubble { max-width: 92%; padding: 10px 12px; border-radius: 12px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+    .chat-user { align-self: flex-end; background: #0369a1; color: #f0f9ff; border-bottom-right-radius: 4px; }
+    .chat-bot { align-self: flex-start; background: #1e293b; color: #e2e8f0; border-bottom-left-radius: 4px; border: 1px solid rgba(148,163,184,0.15); }
+    .chat-typing { opacity: 0.7; font-style: italic; font-size: 12px; }
+    #chat-input-row { border-top: 1px solid rgba(148,163,184,0.2); padding: 10px; display: flex; gap: 8px; background: #020617; }
+    #chat-input { flex: 1; border-radius: 10px; border: 1px solid rgba(148,163,184,0.3); background: #1e293b; color: #f8fafc; padding: 10px 12px; font-size: 13px; outline: none; }
+    #chat-input:focus { border-color: #38bdf8; }
+    #chat-send { border-radius: 10px; background: #0ea5e9; color: #0f172a; font-weight: 700; font-size: 12px; padding: 0 14px; border: none; cursor: pointer; }
+    .quick-q { font-size: 11px; padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(148,163,184,0.3); background: transparent; color: #94a3b8; cursor: pointer; }
+    .quick-q:hover { border-color: #38bdf8; color: #e0f2fe; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+  <div class="flex min-h-screen">
+    <aside class="hidden lg:flex w-[270px] flex-col fixed inset-y-0 left-0 bg-sidebar text-sidebar-foreground border-r border-sidebar-border z-40">
+      <div class="flex items-center gap-3 px-6 py-5 border-b border-sidebar-border">
+        <span class="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500 text-slate-900 font-bold text-lg">CT</span>
+        <div>
+          <p class="font-serif text-xl tracking-tight">CryptoTrace</p>
+          <p class="font-mono text-[9px] uppercase tracking-widest text-slate-400">Fraud attribution · SIH 2026</p>
+        </div>
+      </div>
+      <nav class="flex-1 overflow-y-auto px-3 py-4 space-y-0.5" id="sidebar-nav"></nav>
+      <div class="px-6 py-4 border-t border-sidebar-border text-xs text-slate-400">Facts first · Investigation aid</div>
+    </aside>
+
+    <header class="lg:hidden sticky top-0 z-30 bg-white/95 border-b border-slate-200 backdrop-blur">
+      <div class="flex h-14 items-center justify-between px-4">
+        <span class="font-serif text-xl">CryptoTrace</span>
+        <select id="mobile-nav" class="text-xs border rounded-lg px-2 py-1.5 bg-slate-50"></select>
+      </div>
+    </header>
+
+    <main class="flex-1 lg:ml-[270px] min-h-screen">
+      <!-- ABOUT -->
+      <section id="about" class="page active">
+        <!-- HERO -->
+        <div class="hero-grid text-slate-100 px-5 py-10 lg:px-12 lg:py-14 border-b border-slate-800">
+          <div class="max-w-6xl mx-auto">
+            <div class="flex flex-wrap items-center gap-2 mb-4">
+              <span class="chip rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30 px-3 py-1">SIH 2026</span>
+              <span class="chip rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 px-3 py-1">Real-time attribution</span>
+              <span class="chip rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 px-3 py-1">Golden-hour ops</span>
+            </div>
+            <h1 class="font-serif text-3xl sm:text-4xl lg:text-5xl tracking-tight max-w-3xl leading-tight">
+              Close the gap between <span class="text-sky-400">fraud</span> and <span class="text-amber-400">freeze</span>
+            </h1>
+            <p class="mt-4 max-w-2xl text-sm sm:text-base text-slate-400 leading-7">
+              CryptoTrace is a real-time crypto fraud attribution system for investigators and victims — wallet tracing, VASP detection, layering graphs, and actionable freeze intelligence before the golden hour ends.
+            </p>
+            <div class="mt-8 flex flex-wrap gap-3">
+              <button type="button" onclick="show('trace')" class="rounded-lg bg-sky-500 text-slate-950 px-5 py-2.5 text-xs font-bold hover:bg-sky-400">Start wallet trace →</button>
+              <button type="button" onclick="show('alerts')" class="rounded-lg border border-slate-600 px-5 py-2.5 text-xs font-semibold text-slate-200 hover:bg-slate-800">Golden-hour alerts</button>
+              <button type="button" id="hero-open-chat" class="rounded-lg border border-sky-500/40 bg-sky-500/10 px-5 py-2.5 text-xs font-semibold text-sky-300 hover:bg-sky-500/20">Ask AI assistant</button>
+            </div>
+            <div class="mt-10 grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div class="rounded-xl border border-slate-700/80 bg-slate-900/60 p-4">
+                <p class="chip text-slate-500">Signal</p>
+                <p class="mt-1 font-mono text-2xl text-sky-300">T+min</p>
+                <p class="text-[11px] text-slate-500 mt-1">Attribution latency target</p>
+              </div>
+              <div class="rounded-xl border border-slate-700/80 bg-slate-900/60 p-4">
+                <p class="chip text-slate-500">Graph</p>
+                <p class="mt-1 font-mono text-2xl text-amber-300">DAG</p>
+                <p class="text-[11px] text-slate-500 mt-1">Hop-sequenced fund flow</p>
+              </div>
+              <div class="rounded-xl border border-slate-700/80 bg-slate-900/60 p-4">
+                <p class="chip text-slate-500">Sink</p>
+                <p class="mt-1 font-mono text-2xl text-emerald-300">VASP</p>
+                <p class="text-[11px] text-slate-500 mt-1">Exchange cluster detect</p>
+              </div>
+              <div class="rounded-xl border border-slate-700/80 bg-slate-900/60 p-4">
+                <p class="chip text-slate-500">Action</p>
+                <p class="mt-1 font-mono text-2xl text-rose-300">1930</p>
+                <p class="text-[11px] text-slate-500 mt-1">Helpline + freeze draft</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="px-5 py-10 lg:px-12 max-w-6xl mx-auto">
+          <div class="flex items-end justify-between gap-4 flex-wrap mb-6">
+            <div>
+              <p class="chip text-slate-500">Threat surface</p>
+              <h2 class="font-serif text-2xl sm:text-3xl tracking-tight mt-1">Fraud typologies we attribute</h2>
+            </div>
+            <p class="text-xs text-slate-500 max-w-sm">Each typology maps to wallet patterns: burners, peel-chains, exchange deposits.</p>
+          </div>
+          <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" id="fraud-types"></div>
+
+          <div class="mt-12 flex items-end justify-between gap-4 flex-wrap mb-6">
+            <div>
+              <p class="chip text-slate-500">Investigation failure modes</p>
+              <h2 class="font-serif text-2xl sm:text-3xl tracking-tight mt-1">Why manual tracing loses the hour</h2>
+            </div>
+          </div>
+          <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <div class="card-glow rounded-2xl border border-slate-200 bg-white p-5">
+              <div class="h-9 w-9 rounded-lg bg-slate-900 text-sky-300 flex items-center justify-center font-mono text-xs font-bold">01</div>
+              <h3 class="mt-3 font-semibold text-sm">Burner wallets</h3>
+              <p class="mt-1.5 text-xs leading-5 text-slate-600">Non-custodial, short-lived addresses used for a single collection hop.</p>
+              <p class="mt-3 chip text-sky-700">pattern · low tenure</p>
+            </div>
+            <div class="card-glow rounded-2xl border border-slate-200 bg-white p-5">
+              <div class="h-9 w-9 rounded-lg bg-slate-900 text-amber-300 flex items-center justify-center font-mono text-xs font-bold">02</div>
+              <h3 class="mt-3 font-semibold text-sm">Layering / peel-chains</h3>
+              <p class="mt-1.5 text-xs leading-5 text-slate-600">Rapid fan-out and value reduction before the VASP sink.</p>
+              <p class="mt-3 chip text-amber-700">heuristic · hop timing</p>
+            </div>
+            <div class="card-glow rounded-2xl border border-slate-200 bg-white p-5">
+              <div class="h-9 w-9 rounded-lg bg-slate-900 text-rose-300 flex items-center justify-center font-mono text-xs font-bold">03</div>
+              <h3 class="mt-3 font-semibold text-sm">Multi-chain complexity</h3>
+              <p class="mt-1.5 text-xs leading-5 text-slate-600">Bridges, mixers, DeFi, privacy rails slow human analysts.</p>
+              <p class="mt-3 chip text-rose-700">roadmap · multi-chain</p>
+            </div>
+            <div class="card-glow rounded-2xl border border-slate-200 bg-white p-5">
+              <div class="h-9 w-9 rounded-lg bg-slate-900 text-emerald-300 flex items-center justify-center font-mono text-xs font-bold">04</div>
+              <h3 class="mt-3 font-semibold text-sm">Golden-hour cutoff</h3>
+              <p class="mt-1.5 text-xs leading-5 text-slate-600">Once withdrawn from exchange, recovery probability collapses.</p>
+              <p class="mt-3 chip text-emerald-700">ops · freeze window</p>
+            </div>
+          </div>
+
+          <div class="mt-12 rounded-2xl border border-slate-800 bg-slate-950 text-slate-100 overflow-hidden">
+            <div class="grid lg:grid-cols-2">
+              <div class="p-6 lg:p-8">
+                <p class="chip text-sky-400">System capability</p>
+                <h2 class="mt-2 font-serif text-2xl sm:text-3xl tracking-tight">Attribution pipeline</h2>
+                <ul class="mt-5 space-y-3 text-sm text-slate-300">
+                  <li class="flex gap-3"><span class="font-mono text-sky-400 text-xs mt-0.5">INGEST</span> Complaint wallets from voice / form / NCRP-style intake</li>
+                  <li class="flex gap-3"><span class="font-mono text-sky-400 text-xs mt-0.5">TRACE</span> On-chain hop expansion + exchange cluster labels</li>
+                  <li class="flex gap-3"><span class="font-mono text-sky-400 text-xs mt-0.5">SCORE</span> Explainable risk signals (not a black box)</li>
+                  <li class="flex gap-3"><span class="font-mono text-sky-400 text-xs mt-0.5">ALERT</span> Golden-hour freeze card + 1930 / exchange drafts</li>
+                  <li class="flex gap-3"><span class="font-mono text-sky-400 text-xs mt-0.5">ANCHOR</span> Evidence hash vault for courtroom readiness</li>
+                </ul>
+                <button type="button" onclick="show('trace')" class="mt-6 rounded-lg bg-sky-500 text-slate-950 px-4 py-2.5 text-xs font-bold">Run a live trace</button>
+              </div>
+              <div class="border-t lg:border-t-0 lg:border-l border-slate-800 p-6 lg:p-8 bg-slate-900/50">
+                <p class="chip text-slate-500">LEA outcomes</p>
+                <div class="mt-4 space-y-3">
+                  <div class="rounded-xl border border-slate-700 p-3"><p class="text-sm font-semibold">Faster response</p><p class="text-xs text-slate-400 mt-1">Minutes instead of days of manual hop walking</p></div>
+                  <div class="rounded-xl border border-slate-700 p-3"><p class="text-sm font-semibold">Better freezes</p><p class="text-xs text-slate-400 mt-1">VASP path + draft compliance email in one flow</p></div>
+                  <div class="rounded-xl border border-slate-700 p-3"><p class="text-sm font-semibold">Stronger evidence</p><p class="text-xs text-slate-400 mt-1">Tx ledger, graph, risk rationale, optional on-chain anchor</p></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TRACE -->
+      <section id="trace" class="page px-5 py-8 lg:px-10 max-w-6xl mx-auto">
+        <p class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Core investigation</p>
+        <h1 class="mt-1 font-serif text-3xl tracking-tight">Trace & live fund-flow graph</h1>
+        <p class="mt-2 text-sm text-slate-600">Enter an Ethereum address for risk scoring, technical live graph, and full transaction history with timestamps.</p>
+
+        <form id="trace-form" class="mt-6 flex flex-col sm:flex-row gap-2">
+          <input id="trace-address" class="flex-1 rounded-lg border border-slate-300 px-3 py-2.5 font-mono text-sm" placeholder="0x…" value="0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1" />
+          <button type="submit" class="rounded-lg bg-slate-900 text-white px-5 py-2.5 text-xs font-bold">Run trace</button>
+        </form>
+        <p class="mt-2 text-[11px] text-slate-500">Demo uses realistic sample chain data for the pre-filled address. Any valid 0x address will still render a structured result.</p>
+
+        <div id="trace-result" class="mt-8 space-y-6 hidden">
+          <!-- Metrics strip -->
+          <div class="grid gap-3 grid-cols-2 lg:grid-cols-5">
+            <div class="rounded-xl border bg-white p-4">
+              <p class="font-mono text-[9px] uppercase text-slate-500">Risk score</p>
+              <p class="mt-1 font-mono text-3xl font-semibold" id="risk-score">91</p>
+              <p class="text-[11px] mt-0.5"><span id="risk-level" class="text-red-700 font-semibold">HIGH</span></p>
+            </div>
+            <div class="rounded-xl border bg-white p-4">
+              <p class="font-mono text-[9px] uppercase text-slate-500">Hops traced</p>
+              <p class="mt-1 font-mono text-3xl font-semibold" id="metric-hops">4</p>
+            </div>
+            <div class="rounded-xl border bg-white p-4">
+              <p class="font-mono text-[9px] uppercase text-slate-500">Tx analyzed</p>
+              <p class="mt-1 font-mono text-3xl font-semibold" id="metric-tx">12</p>
+            </div>
+            <div class="rounded-xl border bg-white p-4">
+              <p class="font-mono text-[9px] uppercase text-slate-500">Volume (ETH)</p>
+              <p class="mt-1 font-mono text-3xl font-semibold" id="metric-vol">18.42</p>
+            </div>
+            <div class="rounded-xl border bg-white p-4">
+              <p class="font-mono text-[9px] uppercase text-slate-500">Nearest VASP</p>
+              <p class="mt-1 font-semibold text-sm" id="metric-vasp">Binance</p>
+              <p class="text-[11px] text-slate-500 font-mono" id="metric-latency">~18 min window</p>
+            </div>
+          </div>
+
+          <div class="rounded-xl border bg-white p-5">
+            <p class="font-mono text-[10px] uppercase text-slate-500">Explainable risk signals</p>
+            <ul class="mt-2 space-y-1.5 text-sm" id="risk-signals"></ul>
+          </div>
+
+          <!-- Technical live graph -->
+          <div class="rounded-xl border overflow-hidden shadow-lg">
+            <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-3 bg-slate-950 border-b border-white/10 text-slate-100">
+              <div>
+                <p class="font-mono text-[10px] uppercase text-amber-400/80 tracking-wider">On-chain attribution · force layout</p>
+                <h3 class="text-sm font-semibold">Live technical fund-flow graph</h3>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="font-mono text-[10px] text-slate-400 hidden sm:inline" id="graph-clock">t = 0.0s</span>
+                <button type="button" id="graph-play" class="text-[11px] border border-white/20 rounded px-2.5 py-1 hover:bg-white/10">Pause</button>
+                <button type="button" id="graph-replay" class="text-[11px] border border-white/20 rounded px-2.5 py-1 hover:bg-white/10">Replay</button>
+                <button type="button" id="graph-step" class="text-[11px] border border-white/20 rounded px-2.5 py-1 hover:bg-white/10">Step +1</button>
+                <span class="font-mono text-[10px] text-amber-400" id="hop-label">Hop 0 / 6</span>
+              </div>
+            </div>
+            <div class="relative bg-slate-950">
+              <svg id="live-graph" viewBox="0 0 900 440" class="w-full h-[400px]"></svg>
+              <div id="graph-hud" class="absolute top-3 left-3 right-3 flex flex-wrap gap-2 pointer-events-none"></div>
+              <div id="graph-active-edge" class="absolute bottom-3 left-3 right-3 font-mono text-[11px] text-amber-100/90 bg-slate-950/90 border border-amber-500/30 rounded-lg px-3 py-2 hidden"></div>
+            </div>
+            <div class="flex flex-wrap gap-4 px-4 py-2.5 bg-slate-900 border-t border-white/10 text-[10px] text-slate-400 font-mono">
+              <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-sky-400 ring-2 ring-sky-400/40"></span> SUBJECT</span>
+              <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-amber-500"></span> EXCHANGE / VASP</span>
+              <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-rose-500"></span> FLAGGED</span>
+              <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-slate-500"></span> INTERMEDIARY</span>
+              <span class="inline-flex items-center gap-1.5"><span class="h-0.5 w-4 bg-amber-400"></span> ACTIVE HOP</span>
+              <span class="ml-auto text-slate-500" id="graph-meta">6 nodes · 6 edges · ETH mainnet sample</span>
+            </div>
+          </div>
+
+          <!-- FULL TRANSACTION HISTORY -->
+          <section class="rounded-xl border bg-white overflow-hidden" id="tx-history-section">
+            <div class="flex flex-wrap items-end justify-between gap-3 border-b border-slate-200 px-5 py-4 bg-slate-50/80">
+              <div>
+                <p class="font-mono text-[10px] uppercase tracking-wider text-slate-500">Evidence ledger</p>
+                <h2 class="font-serif text-2xl tracking-tight">Full transaction history</h2>
+                <p class="mt-1 text-xs text-slate-500">Chronological transfers linked to this address · date, time, direction, value, block, status</p>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="font-mono text-[10px] uppercase text-slate-500" id="tx-count-label">0 transactions</span>
+                <select id="tx-filter" class="text-xs border rounded-lg px-2 py-1.5 bg-white">
+                  <option value="all">All</option>
+                  <option value="in">Incoming</option>
+                  <option value="out">Outgoing</option>
+                </select>
+              </div>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-sm min-w-[720px]">
+                <thead>
+                  <tr class="border-b bg-slate-50 font-mono text-[9px] uppercase tracking-wider text-slate-500">
+                    <th class="px-4 py-2.5 font-medium">#</th>
+                    <th class="px-4 py-2.5 font-medium">Date & time (UTC)</th>
+                    <th class="px-4 py-2.5 font-medium">Direction</th>
+                    <th class="px-4 py-2.5 font-medium">Counterparty</th>
+                    <th class="px-4 py-2.5 font-medium">Value (ETH)</th>
+                    <th class="px-4 py-2.5 font-medium">Block</th>
+                    <th class="px-4 py-2.5 font-medium">Tx hash</th>
+                    <th class="px-4 py-2.5 font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="tx-tbody" class="divide-y divide-slate-100"></tbody>
+              </table>
+            </div>
+            <p class="px-5 py-3 text-[11px] text-slate-500 border-t bg-slate-50/50" id="tx-footer">Timestamps are UTC. Hash links are illustrative in demo mode.</p>
+          </section>
+
+          <div class="rounded-xl border bg-white p-5">
+            <p class="font-mono text-[10px] uppercase text-slate-500">AI investigator assistant</p>
+            <p class="mt-2 text-sm leading-6 text-slate-700" id="assistant-answer">After a trace, ask about layering, VASP endpoints, or recovery steps.</p>
+            <div class="mt-3 flex gap-2">
+              <input id="assistant-q" class="flex-1 rounded-lg border px-3 py-2 text-sm" placeholder="e.g. Show the path to the exchange deposit" />
+              <button type="button" id="assistant-btn" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-xs font-bold">Ask</button>
+            </div>
+          </div>
+
+          <!-- REPORTING & COMPLAINT ACTIONS -->
+          <section class="rounded-xl border-2 border-red-200 bg-gradient-to-b from-red-50 to-white overflow-hidden" id="reporting-section">
+            <div class="border-b border-red-200 px-5 py-4 bg-red-50">
+              <p class="font-mono text-[10px] uppercase tracking-wider text-red-700">Post-risk actions · golden hour</p>
+              <h2 class="font-serif text-2xl tracking-tight text-red-950">Report & freeze — necessary complaints</h2>
+              <p class="mt-1 text-sm text-red-900/70">After risk scoring, use these channels immediately while funds may still be freezable at the exchange.</p>
+            </div>
+            <div class="p-5 grid gap-4 lg:grid-cols-3">
+              <!-- Call 1930 -->
+              <div class="rounded-xl border border-red-200 bg-white p-4 flex flex-col">
+                <p class="font-mono text-[10px] uppercase text-red-600">National cybercrime helpline</p>
+                <p class="mt-2 font-serif text-3xl text-red-900">1930</p>
+                <p class="mt-1 text-xs text-slate-600">India Citizen Financial Cyber Fraud Reporting Helpline (24×7)</p>
+                <a href="tel:1930" class="mt-4 inline-flex items-center justify-center gap-2 rounded-lg bg-red-700 text-white px-4 py-2.5 text-xs font-bold hover:bg-red-800">Call 1930 now</a>
+                <p class="mt-3 text-[11px] text-slate-500">Also file online at <span class="font-mono">cybercrime.gov.in</span> (NCRP)</p>
+              </div>
+              <!-- Helpline email -->
+              <div class="rounded-xl border border-slate-200 bg-white p-4 flex flex-col">
+                <p class="font-mono text-[10px] uppercase text-slate-500">Draft email → helpline</p>
+                <p class="mt-1 text-xs font-semibold text-slate-800">complaint@cybercrime.gov.in</p>
+                <p class="mt-2 text-[11px] text-slate-600 flex-1">Pre-filled with wallet, risk score, tx hashes, and VASP path from this trace.</p>
+                <button type="button" id="btn-mailto-helpline" class="mt-4 inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 text-white px-4 py-2.5 text-xs font-bold">Open draft to helpline</button>
+                <button type="button" id="btn-copy-helpline" class="mt-2 text-[11px] font-semibold text-slate-600 underline">Copy email body</button>
+              </div>
+              <!-- Exchange email -->
+              <div class="rounded-xl border border-amber-200 bg-amber-50/50 p-4 flex flex-col">
+                <p class="font-mono text-[10px] uppercase text-amber-800">Draft email → exchange / VASP</p>
+                <p class="mt-1 text-xs font-semibold text-slate-800" id="exchange-email-label">compliance@binance.com (demo)</p>
+                <p class="mt-2 text-[11px] text-slate-600 flex-1">Freeze request with deposit address, amounts, timestamps, and case reference.</p>
+                <button type="button" id="btn-mailto-exchange" class="mt-4 inline-flex items-center justify-center gap-2 rounded-lg bg-amber-700 text-white px-4 py-2.5 text-xs font-bold">Open draft to exchange</button>
+                <button type="button" id="btn-copy-exchange" class="mt-2 text-[11px] font-semibold text-amber-900 underline">Copy email body</button>
+              </div>
+            </div>
+            <div class="px-5 pb-5">
+              <details class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <summary class="cursor-pointer text-sm font-semibold text-slate-800">Preview / edit complaint text</summary>
+                <div class="mt-3 grid gap-3 md:grid-cols-2">
+                  <div>
+                    <p class="font-mono text-[9px] uppercase text-slate-500 mb-1">Helpline body</p>
+                    <textarea id="draft-helpline" rows="10" class="w-full rounded-lg border border-slate-300 p-3 text-[11px] font-mono leading-5"></textarea>
+                  </div>
+                  <div>
+                    <p class="font-mono text-[9px] uppercase text-slate-500 mb-1">Exchange freeze body</p>
+                    <textarea id="draft-exchange" rows="10" class="w-full rounded-lg border border-slate-300 p-3 text-[11px] font-mono leading-5"></textarea>
+                  </div>
+                </div>
+              </details>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <!-- ALERTS -->
+      <section id="alerts" class="page px-5 py-8 lg:px-10 max-w-5xl mx-auto">
+        <p class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Time-critical</p>
+        <h1 class="mt-1 font-serif text-3xl tracking-tight">Golden-hour freeze alerts</h1>
+        <p class="mt-2 text-sm text-slate-600 max-w-2xl">When a trace hits a live exchange path early after a report, act immediately: call the helpline, file NCRP, and send freeze requests to the VASP.</p>
+        <div class="mt-6 grid gap-4 sm:grid-cols-3">
+          <div class="rounded-xl border border-red-200 bg-red-50 p-4"><p class="text-[10px] font-mono uppercase text-red-700">Urgent</p><p class="text-3xl font-serif mt-1">1</p></div>
+          <div class="rounded-xl border border-amber-200 bg-amber-50 p-4"><p class="text-[10px] font-mono uppercase text-amber-800">Active</p><p class="text-3xl font-serif mt-1">1</p></div>
+          <div class="rounded-xl border bg-white p-4"><p class="text-[10px] font-mono uppercase text-slate-500">Expired</p><p class="text-3xl font-serif mt-1">1</p></div>
+        </div>
+        <div class="mt-6 space-y-3" id="alert-list"></div>
+
+        <div class="mt-8 rounded-xl border-2 border-red-200 bg-white overflow-hidden">
+          <div class="bg-red-50 border-b border-red-200 px-5 py-4">
+            <h2 class="font-serif text-xl text-red-950">Required reporting channels</h2>
+            <p class="text-sm text-red-900/70 mt-1">Use these after every high-risk trace while the golden hour is open.</p>
+          </div>
+          <div class="p-5 grid gap-4 md:grid-cols-3">
+            <div class="rounded-lg border border-red-200 p-4 text-center">
+              <p class="font-mono text-[10px] uppercase text-red-600">Helpline</p>
+              <p class="font-serif text-4xl text-red-900 mt-1">1930</p>
+              <a href="tel:1930" class="mt-3 inline-block rounded-lg bg-red-700 text-white px-4 py-2 text-xs font-bold">Call 1930</a>
+              <p class="mt-2 text-[11px] text-slate-500">cybercrime.gov.in · NCRP</p>
+            </div>
+            <div class="rounded-lg border p-4">
+              <p class="font-mono text-[10px] uppercase text-slate-500">Helpline email</p>
+              <p class="text-sm font-semibold mt-1">complaint@cybercrime.gov.in</p>
+              <button type="button" id="alerts-mailto-helpline" class="mt-3 w-full rounded-lg bg-slate-900 text-white px-3 py-2 text-xs font-bold">Draft complaint email</button>
+            </div>
+            <div class="rounded-lg border border-amber-200 bg-amber-50/40 p-4">
+              <p class="font-mono text-[10px] uppercase text-amber-800">Exchange freeze email</p>
+              <p class="text-sm font-semibold mt-1" id="alerts-exchange-label">compliance desk (from alert)</p>
+              <button type="button" id="alerts-mailto-exchange" class="mt-3 w-full rounded-lg bg-amber-700 text-white px-3 py-2 text-xs font-bold">Draft freeze email</button>
+            </div>
+          </div>
+          <div class="px-5 pb-5">
+            <p class="text-xs text-slate-500">Tip: complete a wallet <button type="button" class="text-sky-800 underline font-semibold" onclick="show('trace')">trace</button> first so drafts include risk score, hops, and transaction hashes automatically.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- REGISTRY -->
+      <section id="registry" class="page px-5 py-8 lg:px-10 max-w-5xl mx-auto">
+        <p class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Public source of truth</p>
+        <h1 class="mt-1 font-serif text-3xl tracking-tight">Fraud-wallet & case-law registry</h1>
+        <input id="registry-search" class="mt-6 w-full max-w-md rounded-lg border px-3 py-2.5 text-sm" placeholder="Search address, typology…" />
+        <div class="mt-4 overflow-hidden rounded-xl border bg-white" id="registry-table"></div>
+        <h2 class="mt-10 font-serif text-xl">Case law</h2>
+        <div class="mt-4 grid gap-3 md:grid-cols-2" id="caselaw"></div>
+      </section>
+
+      <!-- SAFETY CHECK -->
+      <section id="safety-check" class="page px-5 py-8 lg:px-10 max-w-3xl mx-auto">
+        <p class="font-mono text-[10px] uppercase tracking-widest text-slate-500 text-center">Prevention</p>
+        <h1 class="mt-1 font-serif text-3xl tracking-tight text-center">Pre-transaction wallet safety check</h1>
+        <form id="safety-form" class="mt-6 flex flex-col sm:flex-row gap-2">
+          <input id="safety-address" class="flex-1 rounded-lg border px-3 py-2.5 font-mono text-sm" placeholder="0x…" />
+          <button class="rounded-lg bg-slate-900 text-white px-5 py-2.5 text-xs font-bold">Check safety</button>
+        </form>
+        <p class="mt-2 text-[11px] text-slate-500">Try: <button type="button" class="text-sky-800 underline font-mono" onclick="document.getElementById('safety-address').value='0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1'">0x742d35Cc…</button></p>
+        <div id="safety-result" class="mt-6"></div>
+      </section>
+
+      <!-- EXTENSION -->
+      <section id="extension" class="page px-5 py-8 lg:px-10 max-w-6xl mx-auto">
+        <p class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Prevention layer · client-side guard</p>
+        <h1 class="mt-1 font-serif text-3xl md:text-4xl tracking-tight">Browser extension — real-time address safety</h1>
+        <p class="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
+          Manifest V3 content-script that detects <code class="font-mono text-xs bg-slate-100 px-1 rounded">0x</code> wallet addresses in the live DOM and clipboard, queries the CryptoTrace Suspect Registry API, and injects a <strong>hard on-screen warning</strong> before the user sends funds — the same idea as Safe Browsing, but for crypto addresses.
+        </p>
+
+        <!-- Technical capability chips -->
+        <div class="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div class="rounded-xl border border-slate-200 bg-white p-4">
+            <p class="font-mono text-[9px] uppercase text-sky-700">Detect</p>
+            <p class="mt-1 text-sm font-semibold">DOM + clipboard scan</p>
+            <p class="mt-1 text-[11px] text-slate-500 leading-5">Regex <span class="font-mono">0x[a-fA-F0-9]{40}</span> on text nodes, inputs, and copy/paste events.</p>
+          </div>
+          <div class="rounded-xl border border-slate-200 bg-white p-4">
+            <p class="font-mono text-[9px] uppercase text-amber-700">Query</p>
+            <p class="mt-1 text-sm font-semibold">Registry API ≤ 200ms</p>
+            <p class="mt-1 text-[11px] text-slate-500 leading-5">Single HTTPS lookup against shared suspect wallet registry used by investigators.</p>
+          </div>
+          <div class="rounded-xl border border-slate-200 bg-white p-4">
+            <p class="font-mono text-[9px] uppercase text-rose-700">Warn</p>
+            <p class="mt-1 text-sm font-semibold">Hard live-screen banner</p>
+            <p class="mt-1 text-[11px] text-slate-500 leading-5">Full-width intercept bar + red highlight on the address; never auto-signs transactions.</p>
+          </div>
+          <div class="rounded-xl border border-slate-200 bg-white p-4">
+            <p class="font-mono text-[9px] uppercase text-emerald-700">Privacy</p>
+            <p class="mt-1 text-sm font-semibold">Address-only egress</p>
+            <p class="mt-1 text-[11px] text-slate-500 leading-5">Only the matched address is sent — not page HTML, cookies, or account data.</p>
+          </div>
+        </div>
+
+        <!-- LIVE DEMO for judges -->
+        <div class="mt-10">
+          <div class="flex flex-wrap items-end justify-between gap-3 mb-3">
+            <div>
+              <p class="font-mono text-[10px] uppercase tracking-wider text-rose-600">Judge demo · live screen intercept</p>
+              <h2 class="font-serif text-2xl tracking-tight">Hard warning on a live page</h2>
+              <p class="text-xs text-slate-500 mt-1">Switch sample pages. When the address is registry-flagged, the extension injects a blocking-style banner on top of the page.</p>
+            </div>
+            <div class="flex gap-2 flex-wrap" id="ext-tabs"></div>
+          </div>
+
+          <div class="rounded-xl border-2 border-slate-800 overflow-hidden shadow-xl bg-white relative" id="ext-browser-frame">
+            <!-- Browser chrome -->
+            <div class="flex items-center gap-2 bg-slate-800 px-3 py-2">
+              <span class="flex gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-red-400"></span><span class="h-2.5 w-2.5 rounded-full bg-amber-400"></span><span class="h-2.5 w-2.5 rounded-full bg-emerald-400"></span></span>
+              <div class="flex-1 rounded-md bg-slate-900 px-3 py-1 font-mono text-[11px] text-slate-300 truncate" id="ext-url">web.telegram.org</div>
+              <span class="chip text-amber-300 border border-amber-500/40 rounded px-2 py-0.5">CryptoTrace ON</span>
+            </div>
+
+            <!-- HARD WARNING BANNER (injected by extension) -->
+            <div id="ext-banner" class="hidden"></div>
+
+            <!-- Simulated page -->
+            <div class="p-5 min-h-[200px] bg-slate-50" id="ext-body"></div>
+
+            <!-- Overlay modal for hard warn (high risk) -->
+            <div id="ext-hard-modal" class="hidden absolute inset-0 z-10 flex items-center justify-center bg-black/55 p-4">
+              <div class="max-w-md w-full rounded-xl border-2 border-red-500 bg-white shadow-2xl overflow-hidden">
+                <div class="bg-red-600 text-white px-4 py-3 flex items-center gap-2">
+                  <span class="text-xl">⚠</span>
+                  <div>
+                    <p class="font-bold text-sm">HARD WARNING — DO NOT SEND FUNDS</p>
+                    <p class="text-[11px] text-red-100 font-mono">CryptoTrace Extension · Registry match</p>
+                  </div>
+                </div>
+                <div class="p-4 text-sm space-y-2" id="ext-hard-body"></div>
+                <div class="px-4 pb-4 flex flex-wrap gap-2">
+                  <button type="button" id="ext-abort" class="rounded-lg bg-red-700 text-white px-4 py-2 text-xs font-bold">Abort transaction</button>
+                  <button type="button" id="ext-dismiss-hard" class="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700">I understand the risk</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="mt-2 text-[11px] text-slate-500 font-mono">Demo simulates content-script injection. Production build uses chrome.scripting + declarativeNetRequest policies where applicable.</p>
+        </div>
+
+        <!-- How to download & install -->
+        <div class="mt-12 grid gap-6 lg:grid-cols-2">
+          <div class="rounded-2xl border border-slate-200 bg-white p-6">
+            <p class="font-mono text-[10px] uppercase tracking-wider text-slate-500">For users</p>
+            <h2 class="font-serif text-xl mt-1">How to download & install</h2>
+            <ol class="mt-4 space-y-3 text-sm text-slate-700">
+              <li class="flex gap-3">
+                <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white font-mono text-[11px]">1</span>
+                <div><strong>Chrome Web Store / Edge Add-ons</strong> (planned release)<br><span class="text-xs text-slate-500">Search “CryptoTrace Address Guard” or open the store link from cryptotrace.app/extension</span></div>
+              </li>
+              <li class="flex gap-3">
+                <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white font-mono text-[11px]">2</span>
+                <div><strong>Click Add to Chrome / Get</strong><br><span class="text-xs text-slate-500">Permissions requested: activeTab, clipboardRead (optional), storage — no wallet private-key access</span></div>
+              </li>
+              <li class="flex gap-3">
+                <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white font-mono text-[11px]">3</span>
+                <div><strong>Pin the extension</strong><br><span class="text-xs text-slate-500">Toolbar icon shows green (idle) / red (flagged hit on current page)</span></div>
+              </li>
+              <li class="flex gap-3">
+                <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white font-mono text-[11px]">4</span>
+                <div><strong>Developer / SIH demo load (unpacked)</strong><br><span class="text-xs text-slate-500 font-mono">chrome://extensions → Developer mode → Load unpacked → select /extension folder</span></div>
+              </li>
+            </ol>
+            <div class="mt-5 rounded-lg bg-slate-950 text-slate-200 p-4 font-mono text-[11px] leading-5">
+              <p class="text-slate-500">// package layout (MVP)</p>
+              <p>extension/</p>
+              <p class="pl-3">manifest.json <span class="text-slate-500">// MV3</span></p>
+              <p class="pl-3">content.js <span class="text-slate-500">// DOM + clipboard detectors</span></p>
+              <p class="pl-3">background.js <span class="text-slate-500">// service worker, API cache</span></p>
+              <p class="pl-3">warn.css <span class="text-slate-500">// hard-banner styles</span></p>
+              <p class="pl-3">popup.html <span class="text-slate-500">// status + last hits</span></p>
+            </div>
+          </div>
+
+          <div class="rounded-2xl border border-slate-200 bg-white p-6">
+            <p class="font-mono text-[10px] uppercase tracking-wider text-slate-500">For users · daily use</p>
+            <h2 class="font-serif text-xl mt-1">How to apply it in practice</h2>
+            <ul class="mt-4 space-y-3 text-sm text-slate-700">
+              <li class="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <strong>Chat / Telegram / WhatsApp Web</strong>
+                <p class="text-xs text-slate-500 mt-1">When a scammer pastes a wallet address, the extension highlights it and shows the banner before you copy-pay.</p>
+              </li>
+              <li class="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <strong>Fake airdrop / claim sites</strong>
+                <p class="text-xs text-slate-500 mt-1">Contract or payout addresses on the page are scanned automatically; high-risk hits open the hard modal.</p>
+              </li>
+              <li class="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <strong>Exchange deposit screens</strong>
+                <p class="text-xs text-slate-500 mt-1">Confirms you are not pasting a known fraud collection address as a “deposit” instruction from a phishing page.</p>
+              </li>
+              <li class="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <strong>Clipboard guard</strong>
+                <p class="text-xs text-slate-500 mt-1">If you copy an address, a toast validates it against the registry within one network round-trip.</p>
+              </li>
+            </ul>
+            <p class="mt-4 text-xs text-slate-500">The extension <strong>never</strong> broadcasts transactions, never asks for seed phrases, and never injects signing requests.</p>
+          </div>
+        </div>
+
+        <!-- Judge briefing -->
+        <div class="mt-10 rounded-2xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white overflow-hidden">
+          <div class="px-6 py-4 border-b border-rose-200 bg-rose-100/60">
+            <p class="font-mono text-[10px] uppercase tracking-wider text-rose-700">For judges · evaluation note</p>
+            <h2 class="font-serif text-xl text-rose-950 mt-1">What “hard warning on live screen” means</h2>
+          </div>
+          <div class="p-6 grid gap-4 md:grid-cols-3 text-sm">
+            <div>
+              <p class="font-semibold text-rose-900">1. Detect on the live page</p>
+              <p class="mt-1 text-xs leading-5 text-slate-600">Content script runs on page load and on DOM mutations (chat messages appearing live). Flagged addresses are underlined in red in-place.</p>
+            </div>
+            <div>
+              <p class="font-semibold text-rose-900">2. Non-dismissible priority banner</p>
+              <p class="mt-1 text-xs leading-5 text-slate-600">For high-risk registry hits, a full-width red banner pins to the top of the viewport with risk score, case count, and typology — visible while the tab is focused.</p>
+            </div>
+            <div>
+              <p class="font-semibold text-rose-900">3. Modal intercept (hard stop UX)</p>
+              <p class="mt-1 text-xs leading-5 text-slate-600">On critical scores, a modal blocks the center of the screen: “DO NOT SEND FUNDS” + Abort. User must consciously dismiss; the goal is to break the scam’s urgency loop.</p>
+            </div>
+          </div>
+          <div class="px-6 pb-6">
+            <div class="rounded-xl border border-rose-200 bg-white p-4 font-mono text-[11px] text-slate-700 leading-6">
+              <p class="text-rose-700 font-bold">// decision logic (simplified)</p>
+              <p>if (registry.hit && riskScore &gt;= 80) → HARD_MODAL + TOP_BANNER + icon badge</p>
+              <p>else if (registry.hit) → TOP_BANNER + inline highlight</p>
+              <p>else → silent allow (optional green toast)</p>
+              <p class="text-slate-400 mt-2">// never: auto-send, auto-sign, keylogging, full-page upload</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Architecture -->
+        <div class="mt-10 rounded-2xl border border-slate-800 bg-slate-950 text-slate-100 p-6">
+          <p class="font-mono text-[10px] uppercase tracking-wider text-sky-400">Architecture · Manifest V3</p>
+          <h2 class="font-serif text-xl mt-1">Technical pipeline</h2>
+          <div class="mt-5 grid gap-3 md:grid-cols-5 text-center text-[11px]">
+            <div class="rounded-lg border border-slate-700 p-3"><p class="font-mono text-sky-300">1. SCAN</p><p class="mt-1 text-slate-400">MutationObserver + clipboard</p></div>
+            <div class="rounded-lg border border-slate-700 p-3"><p class="font-mono text-sky-300">2. NORMALIZE</p><p class="mt-1 text-slate-400">lowercase · checksum optional</p></div>
+            <div class="rounded-lg border border-slate-700 p-3"><p class="font-mono text-sky-300">3. LOOKUP</p><p class="mt-1 text-slate-400">GET /api/registry/:addr</p></div>
+            <div class="rounded-lg border border-slate-700 p-3"><p class="font-mono text-sky-300">4. CACHE</p><p class="mt-1 text-slate-400">chrome.storage · TTL 15m</p></div>
+            <div class="rounded-lg border border-slate-700 p-3"><p class="font-mono text-sky-300">5. RENDER</p><p class="mt-1 text-slate-400">banner · modal · badge</p></div>
+          </div>
+          <p class="mt-5 text-xs text-slate-400 leading-6">Same registry backend as Pre-tx safety check and investigator Suspect Registry — one source of truth from prevention (extension) to post-fraud tracing (LEA console).</p>
+        </div>
+      </section>
+
+      <!-- VOICE -->
+      <section id="voice" class="page px-5 py-8 lg:px-10 max-w-6xl mx-auto">
+        <p class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Accessibility · LEA-ready output</p>
+        <h1 class="mt-1 font-serif text-3xl md:text-4xl tracking-tight">Voice / mother-tongue → formal English complaint</h1>
+        <p class="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
+          Speak or type in your mother language. CryptoTrace transcribes, extracts entities (wallet, amount, typology, dates), and generates a <strong>formal English complaint / FIR-style narrative</strong> suitable for cybercrime branches, NCRP, and station filing — plus a machine-readable field block for the tracing pipeline.
+        </p>
+
+        <div class="mt-6 grid gap-3 sm:grid-cols-3">
+          <div class="rounded-xl border bg-white p-4">
+            <p class="font-mono text-[9px] uppercase text-sky-700">1 · Capture</p>
+            <p class="text-sm font-semibold mt-1">Voice or type (any language)</p>
+            <p class="text-[11px] text-slate-500 mt-1">Hindi, Tamil, Bengali, English, and more in production ASR.</p>
+          </div>
+          <div class="rounded-xl border bg-white p-4">
+            <p class="font-mono text-[9px] uppercase text-amber-700">2 · Extract</p>
+            <p class="text-sm font-semibold mt-1">AI entity structuring</p>
+            <p class="text-[11px] text-slate-500 mt-1">Wallet, amount, fraud type, dates, platform, suspect details.</p>
+          </div>
+          <div class="rounded-xl border bg-white p-4">
+            <p class="font-mono text-[9px] uppercase text-emerald-700">3 · Formalise</p>
+            <p class="text-sm font-semibold mt-1">English complaint / FIR draft</p>
+            <p class="text-[11px] text-slate-500 mt-1">Copy, download, or use with 1930 / cybercrime.gov.in.</p>
+          </div>
+        </div>
+
+        <div class="mt-8 grid gap-6 lg:grid-cols-2">
+          <!-- INPUT -->
+          <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p class="font-mono text-[10px] uppercase text-slate-500">Mother-tongue input</p>
+            <div class="mt-3 flex flex-wrap gap-2" id="lang-btns"></div>
+
+            <button id="voice-btn" type="button" class="mt-4 w-full py-8 rounded-xl border-2 border-dashed border-slate-300 hover:border-slate-900 text-sm font-semibold transition-colors">
+              🎤 Tap to speak (demo sample)
+            </button>
+            <p class="mt-2 text-[11px] text-slate-500">Demo fills a sample transcript in the selected language. Production uses on-device / cloud speech-to-text.</p>
+
+            <label class="mt-4 block font-mono text-[10px] uppercase text-slate-500">Or type / paste what happened</label>
+            <textarea id="transcript" rows="6" class="mt-1.5 w-full rounded-lg border border-slate-300 p-3 text-sm leading-6 outline-none focus:ring-2 focus:ring-slate-900" placeholder="अपनी भाषा में लिखें / Type in your language…"></textarea>
+
+            <div class="mt-3 grid grid-cols-2 gap-2">
+              <div>
+                <label class="font-mono text-[9px] uppercase text-slate-500">Your name (optional)</label>
+                <input id="complainant-name" class="mt-1 w-full rounded-lg border px-3 py-2 text-sm" placeholder="Full name" />
+              </div>
+              <div>
+                <label class="font-mono text-[9px] uppercase text-slate-500">Phone (optional)</label>
+                <input id="complainant-phone" class="mt-1 w-full rounded-lg border px-3 py-2 text-sm" placeholder="Mobile" />
+              </div>
+            </div>
+
+            <button id="structure-btn" type="button" class="mt-4 w-full rounded-lg bg-slate-900 text-white px-4 py-3 text-xs font-bold hover:bg-slate-800">
+              Generate formal English complaint / FIR draft
+            </button>
+          </div>
+
+          <!-- OUTPUT -->
+          <div class="space-y-4">
+            <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" id="structured-fields">
+              <p class="font-mono text-[10px] uppercase text-slate-500">Extracted fields</p>
+              <p class="mt-2 text-sm text-slate-500" id="fields-placeholder">Fields appear after generation.</p>
+              <div id="fields-grid" class="mt-3 hidden grid gap-2 sm:grid-cols-2"></div>
+            </div>
+
+            <div class="rounded-2xl border-2 border-slate-800 bg-white overflow-hidden shadow-sm">
+              <div class="flex flex-wrap items-center justify-between gap-2 bg-slate-900 text-white px-4 py-3">
+                <div>
+                  <p class="font-mono text-[9px] uppercase text-slate-400">For cybercrime branch / NCRP / FIR</p>
+                  <p class="text-sm font-semibold">Formal complaint (English)</p>
+                </div>
+                <div class="flex gap-2">
+                  <button type="button" id="copy-complaint" class="rounded-md bg-white/10 hover:bg-white/20 px-3 py-1.5 text-[11px] font-semibold">Copy</button>
+                  <button type="button" id="download-complaint" class="rounded-md bg-sky-500 text-slate-950 px-3 py-1.5 text-[11px] font-bold">Download .txt</button>
+                </div>
+              </div>
+              <textarea id="formal-complaint" rows="16" class="w-full p-4 text-[12px] font-mono leading-5 border-0 outline-none resize-y min-h-[280px]" placeholder="Formal English complaint will appear here after you generate…"></textarea>
+              <div class="px-4 py-2 border-t bg-slate-50 text-[11px] text-slate-500">
+                Submit via <strong>1930</strong> · <strong>cybercrime.gov.in</strong> · local cyber cell. Attach screenshots, UTR, and tx hashes.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- EVIDENCE -->
+      <section id="evidence" class="page px-5 py-8 lg:px-10 max-w-4xl mx-auto">
+        <p class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Tamper-evident</p>
+        <h1 class="mt-1 font-serif text-3xl tracking-tight">On-chain evidence vault</h1>
+        <div class="mt-6 space-y-4" id="evidence-list"></div>
+      </section>
+
+      <!-- SAFETY LIB -->
+      <section id="safety" class="page px-5 py-8 lg:px-10 max-w-4xl mx-auto">
+        <p class="font-mono text-[10px] uppercase tracking-widest text-slate-500">Guidance</p>
+        <h1 class="mt-1 font-serif text-3xl tracking-tight">Crypto safety library</h1>
+        <div class="mt-6 space-y-4" id="safety-lib"></div>
+      </section>
+    </main>
+  </div>
+
+<!-- AI Chatbot FAB + Panel -->
+<button type="button" id="chat-fab" aria-label="Open AI assistant" title="AI cybercrime assistant">
+  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+</button>
+<div id="chat-panel" role="dialog" aria-label="CryptoTrace AI assistant">
+  <div class="flex items-center justify-between px-4 py-3 border-b border-slate-700 bg-slate-950">
+    <div>
+      <p class="text-sm font-semibold text-white">CryptoTrace AI</p>
+      <p class="text-[10px] text-sky-400 font-mono">cybercrime · fraud · recovery help</p>
+    </div>
+    <button type="button" id="chat-close" class="text-slate-400 hover:text-white text-lg leading-none px-2">&times;</button>
+  </div>
+  <div class="px-3 py-2 border-b border-slate-800 flex flex-wrap gap-1.5 bg-slate-900/80">
+    <button type="button" class="quick-q" data-q="I lost money to a crypto investment scam. What should I do first?">Investment scam help</button>
+    <button type="button" class="quick-q" data-q="How do I report crypto fraud in India?">Report in India</button>
+    <button type="button" class="quick-q" data-q="What is the golden hour in crypto fraud recovery?">Golden hour</button>
+    <button type="button" class="quick-q" data-q="How does wallet tracing work?">Wallet tracing</button>
+  </div>
+  <div id="chat-messages"></div>
+  <div id="chat-input-row">
+    <input id="chat-input" type="text" placeholder="Ask about cyber fraud, tracing, 1930, freezes…" autocomplete="off" />
+    <button type="button" id="chat-send">Send</button>
+  </div>
+</div>
+
+<script>
+const NAV = [
+  { id: 'about', label: 'Problem & cybercrime' },
+  { id: 'trace', label: 'Trace & live graph' },
+  { id: 'alerts', label: 'Golden-hour alerts' },
+  { id: 'registry', label: 'Suspect & case-law registry' },
+  { id: 'safety-check', label: 'Pre-tx safety check' },
+  { id: 'extension', label: 'Browser extension' },
+  { id: 'voice', label: 'Voice complaint intake' },
+  { id: 'evidence', label: 'Evidence vault' },
+  { id: 'safety', label: 'Safety library' },
+];
+
+const REGISTRY = [
+  { address: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1', risk: 'high', score: 91, cases: 7, status: 'flagged', types: 'Investment scam, Layering', exchange: 'Binance cluster' },
+  { address: '0x8ba1f109551bD432803012645Ac136ddd64DBA72', risk: 'high', score: 87, cases: 4, status: 'under review', types: 'Task-based fraud', exchange: 'OKX path' },
+  { address: '0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B', risk: 'moderate', score: 62, cases: 2, status: 'flagged', types: 'Phishing', exchange: '—' },
+  { address: '0x1234567890123456789012345678901234567890', risk: 'high', score: 94, cases: 3, status: 'frozen', types: 'Sextortion, Ransomware', exchange: 'KuCoin' },
+];
+
+const CASELAW = [
+  { court: 'Supreme Court of India', year: 2020, title: 'Internet & Mobile Association of India v. RBI', summary: 'Foundational ruling on crypto regulation and banking access for VASPs.', cite: '(2020) 10 SCC 274' },
+  { court: 'Delhi High Court', year: 2024, title: 'Exchange insolvency & user recovery', summary: 'Illustrates difficulty of recovery once funds leave custodial platforms.', cite: 'Delhi HC 2024 (illustrative)' },
+  { court: 'Bombay High Court', year: 2023, title: 'Interim asset freeze in investment scam', summary: 'Directed preservation of alleged proceeds pending investigation.', cite: 'Bom HC 2023 (illustrative)' },
+  { court: 'Madras High Court', year: 2022, title: 'Digital evidence & blockchain records', summary: 'Electronic evidence standards applicable to on-chain records.', cite: 'Mad HC 2022 (illustrative)' },
+];
+
+const FRAUD = [
+  ['Investment scams', 'Fake trading platforms and guaranteed-return schemes.'],
+  ['Task-based frauds', 'Small task payouts then demand deposits to unlock withdrawals.'],
+  ['Sextortion', 'Threats to publish intimate material unless crypto is paid.'],
+  ['Ransomware', 'Systems locked; crypto demanded for restoration.'],
+  ['Phishing', 'Fake sites tricking victims into signing or sending assets.'],
+  ['Darknet transactions', 'Illicit markets settled via mixers or bridges.'],
+  ['Organized cyber-enabled crime', 'Mule networks and multi-hop laundering.'],
+];
+
+/** Sample full transaction history for demo subject wallet */
+const SAMPLE_TXS = [
+  { hash: '0xf1a2b3c4d5e678901234567890abcdef1234567890abcdef1234567890ab0001', ts: '2026-09-17T06:14:22Z', dir: 'in', from: '0x1111111111111111111111111111111111111111', to: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1', value: '2.500000', block: 21240110, status: 'success', label: 'Victim deposit' },
+  { hash: '0xf1a2b3c4d5e678901234567890abcdef1234567890abcdef1234567890ab0002', ts: '2026-09-17T06:18:41Z', dir: 'out', from: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1', to: '0xaa11111111111111111111111111111111111101', value: '1.200000', block: 21240128, status: 'success', label: 'Layer hop 1' },
+  { hash: '0xf1a2b3c4d5e678901234567890abcdef1234567890abcdef1234567890ab0003', ts: '2026-09-17T06:19:05Z', dir: 'out', from: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1', to: '0xaa22222222222222222222222222222222222202', value: '0.800000', block: 21240131, status: 'success', label: 'Layer hop 1b' },
+  { hash: '0xf1a2b3c4d5e678901234567890abcdef1234567890abcdef1234567890ab0004', ts: '2026-09-17T06:22:18Z', dir: 'out', from: '0xaa11111111111111111111111111111111111101', to: '0xbb33333333333333333333333333333333333303', value: '1.150000', block: 21240155, status: 'success', label: 'Peel chain' },
+  { hash: '0xf1a2b3c4d5e678901234567890abcdef1234567890abcdef1234567890ab0005', ts: '2026-09-17T06:28:03Z', dir: 'out', from: '0xbb33333333333333333333333333333333333303', to: '0xcc44444444444444444444444444444444444404', value: '1.100000', block: 21240190, status: 'success', label: 'Mixer-adjacent' },
+  { hash: '0xf1a2b3c4d5e678901234567890abcdef1234567890abcdef1234567890ab0006', ts: '2026-09-17T06:41:55Z', dir: 'out', from: '0xcc44444444444444444444444444444444444404', to: '0x28C6c06298d514Db089934071355E5743bf21d60', value: '1.050000', block: 21240280, status: 'success', label: 'Binance deposit' },
+  { hash: '0xf1a2b3c4d5e678901234567890abcdef1234567890abcdef1234567890ab0007', ts: '2026-09-18T11:02:10Z', dir: 'in', from: '0x5555555555555555555555555555555555555555', to: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1', value: '0.420000', block: 21248001, status: 'success', label: 'Secondary intake' },
+  { hash: '0xf1a2b3c4d5e678901234567890abcdef1234567890abcdef1234567890ab0008', ts: '2026-09-18T11:05:44Z', dir: 'out', from: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1', to: '0xaa22222222222222222222222222222222222202', value: '0.400000', block: 21248020, status: 'success', label: 'Forward to hop' },
+  { hash: '0xf1a2b3c4d5e678901234567890abcdef1234567890abcdef1234567890ab0009', ts: '2026-09-19T08:30:00Z', dir: 'out', from: '0xaa22222222222222222222222222222222222202', to: '0x28C6c06298d514Db089934071355E5743bf21d60', value: '1.150000', block: 21255000, status: 'success', label: 'Exchange sweep' },
+  { hash: '0xf1a2b3c4d5e678901234567890abcdef1234567890abcdef1234567890ab000a', ts: '2026-09-20T14:11:22Z', dir: 'in', from: '0x6666666666666666666666666666666666666666', to: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1', value: '0.050000', block: 21262010, status: 'success', label: 'Dust / probe' },
+  { hash: '0xf1a2b3c4d5e678901234567890abcdef1234567890abcdef1234567890ab000b', ts: '2026-09-21T09:00:15Z', dir: 'out', from: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1', to: '0xdead000000000000000000000000000000000001', value: '0.010000', block: 21270001, status: 'success', label: 'Residual drain' },
+  { hash: '0xf1a2b3c4d5e678901234567890abcdef1234567890abcdef1234567890ab000c', ts: '2026-09-22T16:45:33Z', dir: 'out', from: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1', to: '0x28C6c06298d514Db089934071355E5743bf21d60', value: '0.090000', block: 21280050, status: 'success', label: 'Final VASP push' },
+];
+
+const GRAPH_NODES = [
+  { id: 'S', x: 450, y: 220, label: 'SUBJECT', sub: '0x742d…bEb1', kind: 'subject' },
+  { id: 'H1', x: 280, y: 110, label: 'HOP-1', sub: '0xaa11…1101', kind: 'mid' },
+  { id: 'H1b', x: 620, y: 100, label: 'HOP-1b', sub: '0xaa22…2202', kind: 'flag' },
+  { id: 'H2', x: 200, y: 280, label: 'HOP-2', sub: '0xbb33…3303', kind: 'mid' },
+  { id: 'H3', x: 320, y: 380, label: 'HOP-3', sub: '0xcc44…4404', kind: 'mid' },
+  { id: 'EX', x: 700, y: 320, label: 'BINANCE', sub: 'deposit cluster', kind: 'ex' },
+];
+
+const GRAPH_EDGES = [
+  { from: 'S', to: 'H1', value: '1.20 ETH', t: '06:18:41', hash: '…0002' },
+  { from: 'S', to: 'H1b', value: '0.80 ETH', t: '06:19:05', hash: '…0003' },
+  { from: 'H1', to: 'H2', value: '1.15 ETH', t: '06:22:18', hash: '…0004' },
+  { from: 'H2', to: 'H3', value: '1.10 ETH', t: '06:28:03', hash: '…0005' },
+  { from: 'H3', to: 'EX', value: '1.05 ETH', t: '06:41:55', hash: '…0006' },
+  { from: 'H1b', to: 'EX', value: '1.15 ETH', t: '08:30:00', hash: '…0009' },
+];
+
+function short(a){ return !a ? '—' : (a.length < 12 ? a : a.slice(0,8)+'…'+a.slice(-6)); }
+function lookup(a){ return REGISTRY.find(w => w.address.toLowerCase() === (a||'').toLowerCase()); }
+function fmtTs(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toISOString().replace('T', ' ').replace('.000Z', ' UTC');
+}
+
+function show(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  document.querySelectorAll('.nav-link').forEach(n => n.classList.toggle('active', n.dataset.id === id));
+  const m = document.getElementById('mobile-nav');
+  if (m) m.value = id;
+  window.scrollTo(0,0);
+}
+
+const sn = document.getElementById('sidebar-nav');
+const mn = document.getElementById('mobile-nav');
+NAV.forEach(n => {
+  const a = document.createElement('button');
+  a.type = 'button';
+  a.className = 'nav-link w-full text-left rounded-lg px-2.5 py-2 text-[13px] text-slate-300 hover:bg-slate-800 ' + (n.id==='about'?'active':'');
+  a.dataset.id = n.id;
+  a.textContent = n.label;
+  a.onclick = () => show(n.id);
+  sn.appendChild(a);
+  const o = document.createElement('option');
+  o.value = n.id; o.textContent = n.label;
+  mn.appendChild(o);
+});
+mn.onchange = () => show(mn.value);
+
+document.getElementById('fraud-types').innerHTML = FRAUD.map(([t,d],i) =>
+  `<article class="card-glow rounded-2xl border border-slate-200 bg-white p-5 relative overflow-hidden">
+    <div class="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-slate-100 to-transparent rounded-bl-full pointer-events-none"></div>
+    <p class="chip text-slate-400">${String(i+1).padStart(2,'0')} · typology</p>
+    <h3 class="font-semibold text-base mt-2 tracking-tight">${t}</h3>
+    <p class="mt-2 text-xs leading-5 text-slate-600">${d}</p>
+    <p class="mt-3 chip text-sky-800">trace · registry · alert</p>
+  </article>`
+).join('');
+
+/* ===== TECHNICAL LIVE GRAPH ===== */
+let step = 0, playing = true, timer = null, animFrame = 0;
+
+function nodeFill(kind, lit) {
+  if (kind === 'subject') return lit ? '#38bdf8' : '#0ea5e9';
+  if (kind === 'ex') return lit ? '#fbbf24' : '#d97706';
+  if (kind === 'flag') return lit ? '#fb7185' : '#e11d48';
+  return lit ? '#94a3b8' : '#475569';
+}
+
+function drawGraph() {
+  const svg = document.getElementById('live-graph');
+  const visible = GRAPH_EDGES.slice(0, step);
+  const active = step > 0 && step <= GRAPH_EDGES.length ? GRAPH_EDGES[step - 1] : null;
+  const lit = new Set(['S']);
+  visible.forEach(e => { lit.add(e.from); lit.add(e.to); });
+
+  let html = `
+    <defs>
+      <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+        <path d="M0,0 L8,4 L0,8 Z" fill="#f59e0b"/>
+      </marker>
+      <filter id="glow"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      <radialGradient id="core" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.35"/>
+        <stop offset="100%" stop-color="#38bdf8" stop-opacity="0"/>
+      </radialGradient>
+      <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(51,65,85,0.45)" stroke-width="0.5"/>
+      </pattern>
+    </defs>
+    <rect width="900" height="440" fill="url(#grid)"/>
+    <text x="16" y="24" fill="#64748b" font-size="10" font-family="ui-monospace,monospace">ETH · attribution DAG · hop-sequenced</text>
+    <text x="16" y="40" fill="#475569" font-size="9" font-family="ui-monospace,monospace">latency window · layering heuristic · VASP sink detection</text>
+  `;
+
+  // edges
+  visible.forEach((e, idx) => {
+    const f = GRAPH_NODES.find(n => n.id === e.from);
+    const t = GRAPH_NODES.find(n => n.id === e.to);
+    const on = active === e;
+    const midX = (f.x + t.x) / 2;
+    const midY = (f.y + t.y) / 2 - 12;
+    html += `<line class="${on ? 'edge-flow' : ''}" x1="${f.x}" y1="${f.y}" x2="${t.x}" y2="${t.y}"
+      stroke="${on ? '#f59e0b' : 'rgba(245,158,11,0.28)'}" stroke-width="${on ? 2.8 : 1.5}"
+      marker-end="url(#arr)" ${on ? 'filter="url(#glow)"' : ''}/>`;
+    if (on) {
+      // moving packet
+      const px = f.x + (t.x - f.x) * ((animFrame % 30) / 30);
+      const py = f.y + (t.y - f.y) * ((animFrame % 30) / 30);
+      html += `<circle cx="${px}" cy="${py}" r="4" fill="#fde68a" filter="url(#glow)"/>`;
+      html += `<text x="${midX}" y="${midY}" text-anchor="middle" fill="#fbbf24" font-size="9" font-family="ui-monospace,monospace">${e.value} · ${e.t}</text>`;
+    }
+  });
+
+  // nodes
+  GRAPH_NODES.forEach(n => {
+    const on = lit.has(n.id);
+    const r = n.kind === 'subject' ? 20 : n.kind === 'ex' ? 18 : 14;
+    if (n.kind === 'subject' && on) html += `<circle cx="${n.x}" cy="${n.y}" r="${r + 18}" fill="url(#core)"/>`;
+    html += `<circle cx="${n.x}" cy="${n.y}" r="${r}" fill="${nodeFill(n.kind, on)}" stroke="${on ? '#fef3c7' : '#334155'}" stroke-width="${on ? 2.5 : 1.5}" ${on && n.kind==='ex' ? 'filter="url(#glow)"' : ''}/>`;
+    html += `<text x="${n.x}" y="${n.y + 4}" text-anchor="middle" fill="#0f172a" font-size="${n.kind==='subject'?9:8}" font-weight="700" font-family="ui-monospace,monospace">${n.kind==='subject'?'SRC':n.kind==='ex'?'VASP':n.kind==='flag'?'!':'W'}</text>`;
+    html += `<text x="${n.x}" y="${n.y + r + 14}" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="ui-monospace,monospace">${n.label}</text>`;
+    html += `<text x="${n.x}" y="${n.y + r + 26}" text-anchor="middle" fill="#64748b" font-size="8" font-family="ui-monospace,monospace">${n.sub}</text>`;
+  });
+
+  // technical side panel on SVG
+  html += `<rect x="720" y="16" width="164" height="100" rx="8" fill="rgba(15,23,42,0.85)" stroke="rgba(148,163,184,0.2)"/>
+    <text x="732" y="36" fill="#94a3b8" font-size="9" font-family="ui-monospace,monospace">GRAPH METRICS</text>
+    <text x="732" y="54" fill="#e2e8f0" font-size="10" font-family="ui-monospace,monospace">depth: ${Math.min(step, GRAPH_EDGES.length)}</text>
+    <text x="732" y="70" fill="#e2e8f0" font-size="10" font-family="ui-monospace,monospace">sink: VASP detected</text>
+    <text x="732" y="86" fill="#e2e8f0" font-size="10" font-family="ui-monospace,monospace">fan-out: 2 @ t0</text>
+    <text x="732" y="102" fill="#fbbf24" font-size="10" font-family="ui-monospace,monospace">score: layering+</text>`;
+
+  svg.innerHTML = html;
+  document.getElementById('hop-label').textContent = `Hop ${Math.min(step, GRAPH_EDGES.length)} / ${GRAPH_EDGES.length}`;
+  document.getElementById('graph-clock').textContent = `t = ${(step * 0.9).toFixed(1)}s`;
+
+  const activeEl = document.getElementById('graph-active-edge');
+  if (active) {
+    activeEl.classList.remove('hidden');
+    activeEl.textContent = `ACTIVE EDGE · ${active.from} → ${active.to} · ${active.value} · ${active.t} UTC · tx ${active.hash}`;
+  } else {
+    activeEl.classList.add('hidden');
+  }
+
+  // HUD chips
+  document.getElementById('graph-hud').innerHTML = `
+    <span class="rounded bg-slate-900/80 border border-white/10 px-2 py-1 font-mono text-[10px] text-sky-300">nodes ${GRAPH_NODES.length}</span>
+    <span class="rounded bg-slate-900/80 border border-white/10 px-2 py-1 font-mono text-[10px] text-amber-300">edges ${visible.length}/${GRAPH_EDGES.length}</span>
+    <span class="rounded bg-slate-900/80 border border-white/10 px-2 py-1 font-mono text-[10px] text-rose-300">flagged 1</span>
+    <span class="rounded bg-slate-900/80 border border-white/10 px-2 py-1 font-mono text-[10px] text-emerald-300">VASP sink 1</span>
+  `;
+}
+
+function tick() {
+  animFrame++;
+  if (playing) {
+    if (animFrame % 18 === 0) {
+      step = step >= GRAPH_EDGES.length + 1 ? 0 : step + 1;
+    }
+  }
+  drawGraph();
+}
+
+function startGraphLoop() {
+  if (timer) clearInterval(timer);
+  timer = setInterval(tick, 50);
+}
+
+document.getElementById('graph-play').onclick = () => {
+  playing = !playing;
+  document.getElementById('graph-play').textContent = playing ? 'Pause' : 'Play';
+};
+document.getElementById('graph-replay').onclick = () => {
+  step = 0; animFrame = 0; playing = true;
+  document.getElementById('graph-play').textContent = 'Pause';
+  drawGraph();
+};
+document.getElementById('graph-step').onclick = () => {
+  playing = false;
+  document.getElementById('graph-play').textContent = 'Play';
+  step = step >= GRAPH_EDGES.length + 1 ? 0 : step + 1;
+  drawGraph();
+};
+
+/* ===== TRANSACTION HISTORY TABLE ===== */
+function renderTxTable(filter = 'all') {
+  const rows = SAMPLE_TXS.filter(tx => filter === 'all' || tx.dir === filter);
+  document.getElementById('tx-count-label').textContent = `${rows.length} transactions`;
+  document.getElementById('tx-tbody').innerHTML = rows.map((tx, i) => {
+    const dirCls = tx.dir === 'in'
+      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+      : 'bg-orange-50 text-orange-800 border-orange-200';
+    const cp = tx.dir === 'in' ? tx.from : tx.to;
+    return `<tr class="tx-row">
+      <td class="px-4 py-2.5 font-mono text-[11px] text-slate-400">${String(i + 1).padStart(2, '0')}</td>
+      <td class="px-4 py-2.5 font-mono text-[11px] whitespace-nowrap">${fmtTs(tx.ts)}</td>
+      <td class="px-4 py-2.5"><span class="inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase ${dirCls}">${tx.dir === 'in' ? 'IN' : 'OUT'}</span></td>
+      <td class="px-4 py-2.5 font-mono text-[11px]" title="${cp}">${short(cp)}<br><span class="text-slate-400 text-[10px]">${tx.label || ''}</span></td>
+      <td class="px-4 py-2.5 font-mono text-[12px] font-medium">${tx.value}</td>
+      <td class="px-4 py-2.5 font-mono text-[11px] text-slate-600">${tx.block.toLocaleString()}</td>
+      <td class="px-4 py-2.5 font-mono text-[10px] text-sky-800">${short(tx.hash)}</td>
+      <td class="px-4 py-2.5"><span class="text-[10px] font-semibold uppercase text-emerald-700">${tx.status}</span></td>
+    </tr>`;
+  }).join('');
+  document.getElementById('tx-footer').textContent =
+    `Showing ${rows.length} of ${SAMPLE_TXS.length} analyzed transfers · timestamps UTC · demo evidence ledger for investigator export`;
+}
+
+document.getElementById('tx-filter').onchange = (e) => renderTxTable(e.target.value);
+
+/* ===== TRACE SUBMIT ===== */
+document.getElementById('trace-form').onsubmit = (e) => {
+  e.preventDefault();
+  const addr = document.getElementById('trace-address').value.trim();
+  const hit = lookup(addr);
+  document.getElementById('trace-result').classList.remove('hidden');
+  document.getElementById('risk-score').textContent = hit ? hit.score : 34;
+  const level = hit ? hit.risk.toUpperCase() : 'LOW';
+  document.getElementById('risk-level').textContent = level;
+  document.getElementById('risk-level').className = (hit && hit.risk === 'high') ? 'text-red-700 font-semibold' : 'text-emerald-700 font-semibold';
+  document.getElementById('metric-hops').textContent = '6';
+  document.getElementById('metric-tx').textContent = String(SAMPLE_TXS.length);
+  document.getElementById('metric-vol').textContent = SAMPLE_TXS.reduce((s, t) => s + parseFloat(t.value), 0).toFixed(2);
+  document.getElementById('metric-vasp').textContent = hit?.exchange?.includes('Binance') ? 'Binance' : (hit?.exchange || 'Not labelled');
+  document.getElementById('metric-latency').textContent = hit ? '~18 min window' : 'n/a';
+
+  const signals = hit
+    ? [
+        'Fan-out: 2 outbound hops within 45 seconds of first receipt (layering heuristic)',
+        'Terminal sink matches labelled exchange deposit cluster (Binance)',
+        `${hit.cases} linked complaints in Suspect Registry`,
+        'Peel-chain pattern: successive value reduction toward VASP',
+        'Short-lived intermediary balances (burner-style)',
+      ]
+    : ['No strong layering pattern in sample window', 'Address not present in Suspect Registry'];
+  document.getElementById('risk-signals').innerHTML = signals.map(s =>
+    `<li class="flex gap-2"><span class="mt-1.5 h-1.5 w-1.5 rounded-full bg-slate-900 shrink-0"></span>${s}</li>`
+  ).join('');
+
+  fillDrafts({
+    address: addr || lastTraceCtx.address,
+    risk: hit ? hit.score : 34,
+    level: hit ? hit.risk.toUpperCase() : 'LOW',
+    vaspp: hit?.exchange?.includes('Binance') ? 'Binance' : (hit?.exchange || document.getElementById('metric-vasp').textContent || 'Not labelled'),
+    hops: 6,
+    volume: document.getElementById('metric-vol').textContent,
+    txs: SAMPLE_TXS.length,
+  });
+
+  step = 0; animFrame = 0; playing = true;
+  document.getElementById('graph-play').textContent = 'Pause';
+  startGraphLoop();
+  renderTxTable(document.getElementById('tx-filter').value);
+  // scroll to graph
+  document.getElementById('live-graph').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+};
+
+
+/* ===== COMPLAINT / FREEZE EMAIL DRAFTS ===== */
+let lastTraceCtx = {
+  address: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1',
+  risk: 91,
+  level: 'HIGH',
+  vaspp: 'Binance',
+  hops: 6,
+  volume: '18.42',
+  txs: 12,
+};
+
+function buildHelplineBody(ctx) {
+  return `Subject: Cyber fraud complaint – crypto wallet fund transfer – urgent freeze assistance
+
+To: complaint@cybercrime.gov.in / National Cybercrime Reporting Portal (NCRP)
+Helpline: 1930
+
+Respected Sir/Madam,
+
+I wish to report a cyber fraud involving cryptocurrency. The suspect wallet used for collection of funds is:
+
+Suspect wallet address: ${ctx.address}
+
+Summary of CryptoTrace analysis (investigation support tool):
+- Risk score: ${ctx.risk}/100 (${ctx.level})
+- Layering hops observed: ${ctx.hops}
+- Approximate volume linked in sample window: ${ctx.volume} ETH
+- Transactions analysed: ${ctx.txs}
+- Nearest exchange / VASP indicated: ${ctx.vaspp}
+
+Nature of fraud (select/adapt): investment scam / task-based fraud / phishing / other.
+
+I request that:
+1. This complaint be registered under the Citizen Financial Cyber Fraud Reporting mechanism.
+2. Coordination be initiated with the concerned exchange/VASP for freezing of proceeds, if still available.
+3. I be guided on further documents required (bank statements, screenshots, UTR/tx hashes).
+
+I have preserved transaction hashes, screenshots of chats/apps, and payment proofs.
+
+Victim contact: [YOUR NAME]
+Phone: [YOUR MOBILE]
+Email: [YOUR EMAIL]
+State/UT: [YOUR STATE]
+Date of incident: [DD/MM/YYYY]
+Amount lost (INR / crypto): [AMOUNT]
+
+Thank you.
+[YOUR NAME]
+`;
+}
+
+function buildExchangeBody(ctx) {
+  const desk = ctx.vaspp && ctx.vaspp !== 'Not labelled'
+    ? `${ctx.vaspp} Compliance / Freeze Desk`
+    : 'Exchange Compliance / Law Enforcement Desk';
+  return `Subject: URGENT – Request to freeze funds – suspected fraud proceeds – wallet ${ctx.address.slice(0,10)}…
+
+To: ${desk}
+(Also notify LEA / attach FIR or NCRP acknowledgement when available)
+
+Dear Compliance Team,
+
+We request an urgent freeze / hold on any balances or incoming deposits associated with the following blockchain activity linked to a reported cyber fraud:
+
+1. Suspect / collection wallet: ${ctx.address}
+2. Indicated deposit path / cluster: ${ctx.vaspp}
+3. Risk assessment (CryptoTrace support tool): ${ctx.risk}/100 (${ctx.level})
+4. Observed layering hops: ${ctx.hops}
+5. Sample volume in analysis window: ${ctx.volume} ETH
+6. Transactions analysed: ${ctx.txs}
+
+Please treat this as a priority golden-hour request. Funds may still be recoverable if not yet withdrawn.
+
+We can provide:
+- Full transaction hash list and timestamps (UTC)
+- Fund-flow graph / hop sequence
+- Victim complaint reference / NCRP acknowledgement number (once issued)
+- Contact details of investigating officer (if FIR registered)
+
+Kindly confirm receipt and advise the formal LEA channel / LE request format your team requires for a sustained freeze.
+
+Regards,
+[INVESTIGATOR / VICTIM NAME]
+[AGENCY / INDIVIDUAL]
+Phone: [NUMBER]
+Email: [EMAIL]
+Reference: CryptoTrace case draft – ${new Date().toISOString().slice(0,10)}
+`;
+}
+
+function exchangeMailto(vasp) {
+  const v = (vasp || '').toLowerCase();
+  if (v.includes('binance')) return 'compliance@binance.com';
+  if (v.includes('okx')) return 'support@okx.com';
+  if (v.includes('kucoin')) return 'support@kucoin.com';
+  return 'compliance@exchange.example';
+}
+
+function fillDrafts(ctx) {
+  lastTraceCtx = ctx;
+  const h = buildHelplineBody(ctx);
+  const x = buildExchangeBody(ctx);
+  const dh = document.getElementById('draft-helpline');
+  const dx = document.getElementById('draft-exchange');
+  if (dh) dh.value = h;
+  if (dx) dx.value = x;
+  const el = document.getElementById('exchange-email-label');
+  if (el) el.textContent = exchangeMailto(ctx.vaspp) + ' · ' + (ctx.vaspp || 'VASP');
+  const al = document.getElementById('alerts-exchange-label');
+  if (al) al.textContent = (ctx.vaspp || 'Exchange') + ' compliance desk';
+}
+
+function openMailto(to, body) {
+  const subject = body.split('\\n')[0].replace(/^Subject:\\s*/i, '');
+  const rest = body.split('\\n').slice(1).join('\\n').trim();
+  const url = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(rest)}`;
+  window.location.href = url;
+}
+
+function copyText(id, btn) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  navigator.clipboard.writeText(el.value).then(() => {
+    if (btn) { const t = btn.textContent; btn.textContent = 'Copied'; setTimeout(() => btn.textContent = t, 1500); }
+  });
+}
+
+document.getElementById('btn-mailto-helpline')?.addEventListener('click', () => {
+  openMailto('complaint@cybercrime.gov.in', document.getElementById('draft-helpline')?.value || buildHelplineBody(lastTraceCtx));
+});
+document.getElementById('btn-mailto-exchange')?.addEventListener('click', () => {
+  openMailto(exchangeMailto(lastTraceCtx.vaspp), document.getElementById('draft-exchange')?.value || buildExchangeBody(lastTraceCtx));
+});
+document.getElementById('btn-copy-helpline')?.addEventListener('click', function() { copyText('draft-helpline', this); });
+document.getElementById('btn-copy-exchange')?.addEventListener('click', function() { copyText('draft-exchange', this); });
+document.getElementById('alerts-mailto-helpline')?.addEventListener('click', () => {
+  if (!document.getElementById('draft-helpline')?.value) fillDrafts(lastTraceCtx);
+
+  openMailto('complaint@cybercrime.gov.in', document.getElementById('draft-helpline').value);
+});
+document.getElementById('alerts-mailto-exchange')?.addEventListener('click', () => {
+  if (!document.getElementById('draft-exchange')?.value) fillDrafts(lastTraceCtx);
+  openMailto(exchangeMailto(lastTraceCtx.vaspp), document.getElementById('draft-exchange').value);
+});
+
+
+document.getElementById('assistant-btn').onclick = () => {
+  const q = document.getElementById('assistant-q').value || 'layering path';
+  document.getElementById('assistant-answer').textContent =
+    `Path summary: SUBJECT received victim funds, fanned out to HOP-1 / HOP-1b within ~45s, then peel-chained via HOP-2 → HOP-3 into a Binance-labelled deposit address. Transaction history below lists every hop with UTC timestamps and block numbers. For recovery: notify exchange compliance with the terminal deposit tx hashes while the golden-hour window remains open. Context: “${q}”.`;
+};
+
+/* Alerts */
+document.getElementById('alert-list').innerHTML = [
+  { addr: REGISTRY[0].address, ex: 'Binance', min: 18, st: 'urgent', amt: '12.45 ETH' },
+  { addr: REGISTRY[1].address, ex: 'OKX', min: 47, st: 'active', amt: '4.10 ETH' },
+  { addr: REGISTRY[2].address, ex: 'Unknown VASP', min: 95, st: 'expired', amt: '0.85 ETH' },
+].map(a => {
+  const c = a.st==='urgent'?'border-red-300 bg-red-50':a.st==='active'?'border-amber-300 bg-amber-50':'border-slate-200 bg-white';
+  return `<div class="rounded-xl border p-4 ${c}"><div class="flex justify-between"><span class="font-mono text-xs">${short(a.addr)}</span><span class="text-[10px] font-bold uppercase">${a.st}</span></div><p class="mt-1 text-sm text-slate-600">→ ${a.ex} · ${a.amt} · ${a.min} min since report</p></div>`;
+}).join('');
+
+function renderRegistry(q='') {
+  const rows = REGISTRY.filter(w => !q || w.address.toLowerCase().includes(q) || w.types.toLowerCase().includes(q));
+  document.getElementById('registry-table').innerHTML = `
+    <div class="hidden sm:grid grid-cols-5 gap-2 px-4 py-2 text-[9px] font-mono uppercase text-slate-500 border-b bg-slate-50"><span>Wallet</span><span>Risk</span><span>Cases</span><span>Status</span><span>Exchange</span></div>
+    ${rows.map(w=>`<div class="grid sm:grid-cols-5 gap-2 px-4 py-3 border-b text-sm items-center"><span class="font-mono text-xs">${short(w.address)}<br><span class="text-[11px] text-slate-500">${w.types}</span></span><span>${w.risk} (${w.score})</span><span>${w.cases}</span><span>${w.status}</span><span class="text-slate-600">${w.exchange}</span></div>`).join('')}`;
+}
+renderRegistry();
+document.getElementById('registry-search').oninput = (e) => renderRegistry(e.target.value.toLowerCase());
+document.getElementById('caselaw').innerHTML = CASELAW.map(c =>
+  `<article class="rounded-xl border bg-white p-4"><p class="font-mono text-[10px] text-slate-500">${c.court} · ${c.year}</p><h3 class="mt-1 font-semibold text-sm">${c.title}</h3><p class="mt-1 text-sm text-slate-600">${c.summary}</p><p class="mt-2 font-mono text-[10px] text-slate-400">${c.cite}</p></article>`
+).join('');
+
+document.getElementById('safety-form').onsubmit = (e) => {
+  e.preventDefault();
+  const a = document.getElementById('safety-address').value.trim();
+  const hit = lookup(a);
+  const el = document.getElementById('safety-result');
+  if (!/^0x[a-fA-F0-9]{40}$/.test(a)) { el.innerHTML = '<p class="text-red-600 text-sm">Enter a valid Ethereum address.</p>'; return; }
+  if (hit) {
+    el.innerHTML = `<div class="rounded-xl border border-red-300 bg-red-50 p-5"><p class="font-serif text-xl text-red-950">Flagged — ${hit.risk} risk (${hit.score}/100)</p><p class="font-mono text-xs mt-1">${short(a)}</p><p class="mt-2 text-sm">${hit.cases} linked cases · ${hit.types}</p></div>`;
+  } else {
+    el.innerHTML = `<div class="rounded-xl border border-emerald-300 bg-emerald-50 p-5"><p class="font-serif text-xl text-emerald-950">Not currently flagged</p><p class="font-mono text-xs mt-1">${short(a)}</p></div>`;
+  }
+};
+
+const EXT = [
+  { id:'chat', url:'web.telegram.org/a/#scam-desk', title:'Telegram / chat', body:'Support Agent: Your withdrawal is locked. Send the remaining fee to this wallet to unlock funds immediately:\n\n0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1\n\nDo this in 10 minutes or your account will be closed.', addr:'0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1' },
+  { id:'ex', url:'secure-wallet-deposit.example/eth', title:'Phishing deposit page', body:'Official deposit address for ETH:\n\n0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045\n\nPaste this in your wallet app to top up.', addr:'0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045' },
+  { id:'dapp', url:'airdrop-claim-now.xyz', title:'Fake airdrop DApp', body:'Claim portal loaded. Approve token spend for distributor contract:\n\n0x8ba1f109551bD432803012645Ac136ddd64DBA72\n\nConnect wallet → Confirm.', addr:'0x8ba1f109551bD432803012645Ac136ddd64DBA72' },
+];
+
+function showExt(p) {
+  document.getElementById('ext-url').textContent = p.url;
+  const hit = lookup(p.addr);
+  const ban = document.getElementById('ext-banner');
+  const modal = document.getElementById('ext-hard-modal');
+  const hardBody = document.getElementById('ext-hard-body');
+  const hard = hit && hit.score >= 80;
+
+  if (hit) {
+    ban.classList.remove('hidden');
+    ban.className = 'px-4 py-3 border-b-4 border-red-600 bg-red-600 text-white text-sm shadow-lg';
+    ban.innerHTML = `<div class="flex flex-wrap items-start justify-between gap-2">
+      <div>
+        <p class="font-bold text-sm tracking-wide">⚠ CRYPTOTRACE HARD WARNING — DO NOT SEND FUNDS</p>
+        <p class="font-mono text-[11px] text-red-100 mt-0.5">${p.addr}</p>
+        <p class="text-[11px] mt-1 text-red-50">Risk ${hit.score}/100 · ${hit.cases} linked cases · ${hit.types} · status: ${hit.status}</p>
+      </div>
+      <span class="rounded bg-white text-red-700 px-2 py-1 text-[10px] font-bold uppercase">Registry match</span>
+    </div>`;
+  } else {
+    ban.classList.remove('hidden');
+    ban.className = 'px-4 py-2.5 border-b border-emerald-300 bg-emerald-50 text-emerald-950 text-sm';
+    ban.innerHTML = `<strong>CryptoTrace:</strong> no registry flags for <span class="font-mono text-xs">${short(p.addr)}</span> — still verify the counterparty independently.`;
+  }
+
+  const highlighted = p.body.split(p.addr).join(
+    hit
+      ? `<mark class="addr" style="background:#fecaca;color:#7f1d1d;outline:2px solid #dc2626;padding:2px 4px;border-radius:4px;font-weight:600">${p.addr}</mark>`
+      : `<mark class="addr">${p.addr}</mark>`
+  );
+  document.getElementById('ext-body').innerHTML =
+    `<h2 class="font-serif text-lg mb-2">${p.title}</h2>
+     <p class="text-sm leading-7 whitespace-pre-wrap text-slate-800">${highlighted}</p>
+     <p class="mt-4 text-[10px] font-mono text-slate-400">content-script · scan=complete · latency≈120ms · source=SuspectRegistry</p>`;
+
+  if (hard && modal && hardBody) {
+    hardBody.innerHTML = `
+      <p class="font-mono text-[11px] break-all text-slate-600">${p.addr}</p>
+      <p><strong>Risk score:</strong> ${hit.score}/100 (${hit.risk})</p>
+      <p><strong>Linked cases:</strong> ${hit.cases}</p>
+      <p><strong>Typologies:</strong> ${hit.types}</p>
+      <p><strong>Exchange hint:</strong> ${hit.exchange || '—'}</p>
+      <p class="text-xs text-red-800 mt-2">This address appears in the CryptoTrace fraud-wallet registry. Sending funds may make recovery impossible. Call <strong>1930</strong> if you already paid.</p>`;
+    modal.classList.remove('hidden');
+  } else if (modal) {
+    modal.classList.add('hidden');
+  }
+}
+
+document.getElementById('ext-tabs').innerHTML = EXT.map(p =>
+  `<button type="button" class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold hover:border-slate-900" data-ext="${p.id}">${p.title}</button>`
+).join('');
+document.getElementById('ext-tabs').onclick = (e) => {
+  const id = e.target.dataset.ext;
+  if (id) showExt(EXT.find(x => x.id === id));
+};
+document.getElementById('ext-dismiss-hard')?.addEventListener('click', () => {
+  document.getElementById('ext-hard-modal')?.classList.add('hidden');
+});
+document.getElementById('ext-abort')?.addEventListener('click', () => {
+  document.getElementById('ext-hard-modal')?.classList.add('hidden');
+  alert('Transaction aborted (demo). No funds sent. Extension kept the hard warning in the page banner.');
+});
+showExt(EXT[0]);
+
+const LANGS = {
+  Hindi: 'मेरे से एक ऑनलाइन निवेश ऐप में धोखाधोरी हुई है। उन्होंने गारंटीड रिटर्न दिखाया। मैंने 15 सितंबर 2026 को करीब दो लाख रुपये क्रिप्टो में भेजे। वॉलेट एड्रेस है 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1। अब वे पैसे नहीं लौटा रहे और धमकी दे रहे हैं।',
+  English: 'I was scammed through a task-based app. After small task payments they asked for a deposit to unlock earnings. On 19 September 2026 I sent 0.4 ETH to wallet 0x8ba1f109551bD432803012645Ac136ddd64DBA72. They blocked me after that.',
+  Tamil: 'முதலீட்டு மோசடியில் என்னிடம் இருந்து பணம் ஏமாற்றப்பட்டது. அவர்கள் கொடுத்த கிரிப்டோ வாலட் முகவரி 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1. நான் சுமார் இரண்டு லட்சம் ரூபாய் அனுப்பினேன். தயவுசெய்து புகார் பதிவு செய்யுங்கள்.',
+  Bengali: 'আমাকে একটি ফেক ইনভেস্টমেন্ট অ্যাপে ফাঁসিয়ে প্রায় এক লক্ষ টাকা আত্মসাৎ করা হয়েছে। ওয়ালেট অ্যাড্রেস 0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B। অনুরোধ করছি সাইবার ক্রাইম অভিযোগ দায়ের করতে।',
+};
+
+let curLang = 'Hindi';
+
+function setLangButtons() {
+  const box = document.getElementById('lang-btns');
+  if (!box) return;
+  box.innerHTML = Object.keys(LANGS).map(function(l) {
+    return '<button type="button" class="lang-btn rounded-full border px-3 py-1.5 text-xs font-medium ' +
+      (l === curLang ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700') +
+      '" data-lang="' + l + '">' + l + '</button>';
+  }).join('');
+}
+setLangButtons();
+document.getElementById('lang-btns').onclick = function(e) {
+  var l = e.target.dataset.lang;
+  if (!l) return;
+  curLang = l;
+  setLangButtons();
+};
+
+document.getElementById('voice-btn').onclick = function() {
+  var btn = document.getElementById('voice-btn');
+  btn.textContent = 'Listening… (demo)';
+  btn.disabled = true;
+  setTimeout(function() {
+    document.getElementById('transcript').value = LANGS[curLang] || LANGS.English;
+    btn.textContent = '🎤 Tap to speak (demo sample)';
+    btn.disabled = false;
+  }, 1200);
+};
+
+function extractWallet(text) {
+  var m = text && text.match(/0x[a-fA-F0-9]{40}/);
+  return m ? m[0] : 'Not clearly stated — to be filled by complainant';
+}
+
+function detectTypology(text, lang) {
+  var t = (text || '').toLowerCase();
+  if (/task|टास्क|কাজ/.test(t)) return 'Task-based / deposit unlock fraud';
+  if (/sextort|blackmail|intimate/.test(t)) return 'Sextortion / cyber blackmail';
+  if (/ransom|malware/.test(t)) return 'Ransomware';
+  if (/phish|fake site|imitat/.test(t)) return 'Phishing / impersonation';
+  if (/invest|निवेश|முதலீ|ইনভেস্ট|return|trading|ट्रेडिंग/.test(t) || lang === 'Hindi' || lang === 'Tamil' || lang === 'Bengali')
+    return 'Online investment / trading app fraud';
+  return 'Cyber-enabled financial fraud involving cryptocurrency';
+}
+
+function detectAmount(text, lang) {
+  var t = text || '';
+  var eth = t.match(/(\d+\.?\d*)\s*ETH/i);
+  if (eth) return eth[1] + ' ETH';
+  var inr = t.match(/(दो लाख|2\s*lakh|200000|₹\s*2,?\s*00,?\s*000|দুই লাখ|এক লাখ|1\s*lakh|லட்சம்)/i);
+  if (inr) {
+    if (/এক|1\s*lakh/i.test(t)) return 'Approximately ₹1,00,000 (as stated by complainant)';
+    return 'Approximately ₹2,00,000 (as stated by complainant)';
+  }
+  if (lang === 'English' && /0\.4/.test(t)) return '0.4 ETH';
+  return 'As per payment proofs to be annexed';
+}
+
+function buildFormalComplaint(opts) {
+  var name = opts.name || '[COMPLAINANT FULL NAME]';
+  var phone = opts.phone || '[MOBILE NUMBER]';
+  var today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' });
+  var caseId = 'CT-DRAFT-' + Date.now().toString().slice(-8);
+
+  return (
+'To\n' +
+'The Officer-in-Charge / Cyber Crime Cell\n' +
+'[Police Station / Cyber Crime Branch]\n' +
+'[District / State]\n\n' +
+'Subject: Complaint regarding online cyber fraud involving cryptocurrency — request for registration of FIR / NCRP case and freezing of suspect wallet proceeds\n\n' +
+'Respected Sir/Madam,\n\n' +
+'I, ' + name + ', resident of [FULL ADDRESS, STATE, PIN], mobile ' + phone +
+', most respectfully beg to state as follows:\n\n' +
+'1. That I am a law-abiding citizen and the facts stated herein are true to the best of my knowledge and belief.\n\n' +
+'2. Nature of offence (as understood by complainant):\n' +
+'   ' + opts.typology + '.\n\n' +
+'3. Brief facts in chronological order:\n' +
+'   The complainant was induced through an online platform / application / chat to transfer cryptocurrency / digital assets. ' +
+'The interaction and payment instructions were in the nature of a fraudulent scheme. ' +
+'The complainant transferred funds as directed by the accused persons / unknown operators.\n\n' +
+'4. Approximate amount involved:\n' +
+'   ' + opts.amount + '.\n\n' +
+'5. Suspect cryptocurrency wallet address (as available):\n' +
+'   ' + opts.wallet + '\n\n' +
+'6. Original statement of the complainant (mother tongue / as recorded — ' + opts.lang + '):\n' +
+'   \"' + opts.transcript.replace(/\n/g, ' ') + '\"\n\n' +
+'7. English gist of the above statement (AI-assisted structuring for official use):\n' +
+'   The complainant reports being defrauded in connection with cryptocurrency transfers linked to the wallet address above. ' +
+'The accused induced the transfer under false pretences and thereafter failed to return the funds / continued harassment. ' +
+'The complainant seeks investigation, tracing of fund flow, and freezing of proceeds of crime at any VASP / exchange still holding the assets.\n\n' +
+'8. Reliefs prayed for:\n' +
+'   (a) Register the present complaint under appropriate sections of the Bharatiya Nyaya Sanhita / IT Act and allied laws;\n' +
+'   (b) Cause the matter to be reflected on the National Cybercrime Reporting Portal (NCRP) as applicable;\n' +
+'   (c) Direct tracing of the said wallet and coordination with cryptocurrency exchanges / VASPs for freezing of remaining proceeds;\n' +
+'   (d) Investigate and take action against the unknown accused persons;\n' +
+'   (e) Issue such other directions as this Hon\'ble authority deems fit.\n\n' +
+'9. Annexures (to be attached by complainant):\n' +
+'   - Screenshots of chats / app dashboard\n' +
+'   - Transaction hashes / UTR / payment receipts\n' +
+'   - Wallet address and any exchange account references\n' +
+'   - Identity proof of complainant\n\n' +
+'10. Declaration:\n' +
+'    I undertake to cooperate with the investigation and state that this complaint is not filed with any malicious intent.\n\n' +
+'Place: [CITY]\n' +
+'Date: ' + today + '\n\n' +
+'                                        ________________________\n' +
+'                                        Signature of Complainant\n' +
+'                                        Name: ' + name + '\n' +
+'                                        Mobile: ' + phone + '\n\n' +
+'---\n' +
+'CryptoTrace draft reference: ' + caseId + '\n' +
+'Helpline: 1930 | Portal: cybercrime.gov.in\n' +
+'This draft is generated to assist filing and does not replace verification by the complainant or the investigating officer.\n'
+  );
+}
+
+document.getElementById('structure-btn').onclick = function() {
+  var transcript = (document.getElementById('transcript').value || '').trim();
+  if (!transcript) {
+    alert('Please speak (demo) or type what happened in your language first.');
+    return;
+  }
+  var btn = document.getElementById('structure-btn');
+  btn.textContent = 'Generating formal complaint…';
+  btn.disabled = true;
+
+  setTimeout(function() {
+    var wallet = extractWallet(transcript);
+    var typology = detectTypology(transcript, curLang);
+    var amount = detectAmount(transcript, curLang);
+    var name = (document.getElementById('complainant-name').value || '').trim();
+    var phone = (document.getElementById('complainant-phone').value || '').trim();
+
+    var fields = [
+      ['Language of intake', curLang],
+      ['Fraud typology', typology],
+      ['Amount (stated)', amount],
+      ['Suspect wallet', wallet],
+      ['Complainant', name || 'To be filled'],
+      ['Mobile', phone || 'To be filled'],
+    ];
+    document.getElementById('fields-placeholder').classList.add('hidden');
+    var grid = document.getElementById('fields-grid');
+    grid.classList.remove('hidden');
+    grid.innerHTML = fields.map(function(f) {
+      return '<div class="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2"><p class="font-mono text-[9px] uppercase text-slate-500">' +
+        f[0] + '</p><p class="text-xs font-medium mt-0.5 break-all">' + f[1] + '</p></div>';
+    }).join('');
+
+    var formal = buildFormalComplaint({
+      name: name,
+      phone: phone,
+      lang: curLang,
+      transcript: transcript,
+      wallet: wallet,
+      typology: typology,
+      amount: amount,
+    });
+    document.getElementById('formal-complaint').value = formal;
+
+    btn.textContent = 'Generate formal English complaint / FIR draft';
+    btn.disabled = false;
+  }, 900);
+};
+
+document.getElementById('copy-complaint').onclick = function() {
+  var t = document.getElementById('formal-complaint').value;
+  if (!t) return;
+  navigator.clipboard.writeText(t).then(function() {
+    var b = document.getElementById('copy-complaint');
+    var old = b.textContent;
+    b.textContent = 'Copied';
+    setTimeout(function() { b.textContent = old; }, 1500);
+  });
+};
+
+document.getElementById('download-complaint').onclick = function() {
+  var t = document.getElementById('formal-complaint').value;
+  if (!t) return;
+  var blob = new Blob([t], { type: 'text/plain;charset=utf-8' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'CryptoTrace-Cyber-Complaint-Draft.txt';
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+
+document.getElementById('evidence-list').innerHTML = [
+  { id:'CT-2026-0918-001', addr: REGISTRY[0].address, hash:'0xa1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456', net:'Sepolia' },
+  { id:'CT-2026-0920-014', addr: REGISTRY[1].address, hash:'0xb2c3d4e5f6789012345678901234567890abcdef1234567890abcdef12345678', net:'Sepolia' },
+].map(r => `<article class="rounded-xl border bg-white p-5"><p class="font-mono text-[10px] text-slate-500">Case ${r.id} · ${r.net}</p><p class="font-mono text-xs mt-1">${short(r.addr)}</p><p class="mt-3 font-mono text-[11px] break-all text-slate-600">hash: ${r.hash}</p></article>`).join('');
+
+fillDrafts(lastTraceCtx);
+
+document.getElementById('safety-lib').innerHTML = FRAUD.map(([t,d],i) =>
+  `<div class="rounded-xl border bg-white p-5"><p class="font-mono text-[10px] text-slate-400">${String(i+1).padStart(2,'0')}</p><h3 class="font-semibold">${t}</h3><p class="mt-1 text-sm text-slate-600">${d}</p><ul class="mt-2 text-sm text-slate-600 list-disc ml-4"><li>Stop further payments</li><li>Preserve chats, URLs, tx hashes</li><li>Report via NCRP / cyber cell</li></ul></div>`
+).join('');
+
+
+/* ===== FLOATING AI CHATBOT (init after DOM) ===== */
+(function initCryptoTraceChat() {
+  const chatPanel = document.getElementById('chat-panel');
+  const chatMsgs = document.getElementById('chat-messages');
+  const chatInput = document.getElementById('chat-input');
+  const chatFab = document.getElementById('chat-fab');
+  const chatClose = document.getElementById('chat-close');
+  const chatSend = document.getElementById('chat-send');
+  if (!chatPanel || !chatMsgs || !chatInput || !chatFab) {
+    console.error('CryptoTrace chat: missing DOM nodes');
+    return;
+  }
+
+  function openChat() {
+    chatPanel.classList.add('open');
+    if (!chatMsgs.dataset.welcomed) {
+      botSay("Hi — I'm the CryptoTrace assistant.\n\nAsk me about cyber fraud types, how to report (1930 / NCRP), wallet tracing, golden-hour freezes, or what to do if you've been scammed.\n\nI give practical guidance only — not legal advice. For emergencies call 1930.");
+      chatMsgs.dataset.welcomed = '1';
+    }
+    setTimeout(function() { chatInput.focus(); }, 100);
+  }
+  function closeChat() { chatPanel.classList.remove('open'); }
+
+  chatFab.addEventListener('click', function() {
+    if (chatPanel.classList.contains('open')) closeChat(); else openChat();
+  });
+  if (chatClose) chatClose.addEventListener('click', closeChat);
+  var heroBtn = document.getElementById('hero-open-chat');
+  if (heroBtn) heroBtn.addEventListener('click', openChat);
+
+  function addBubble(text, who) {
+    var d = document.createElement('div');
+    d.className = 'chat-bubble ' + (who === 'user' ? 'chat-user' : 'chat-bot');
+    d.textContent = text;
+    chatMsgs.appendChild(d);
+    chatMsgs.scrollTop = chatMsgs.scrollHeight;
+    return d;
+  }
+  function botSay(text) { return addBubble(text, 'bot'); }
+
+  function aiReply(q) {
+    var s = (q || '').toLowerCase();
+    if (/1930|helpline|report|ncrp|complaint|police|fir/.test(s)) {
+      return "To report crypto fraud in India:\n\n1. Call 1930 (Citizen Financial Cyber Fraud Helpline, 24×7).\n2. File online at cybercrime.gov.in (NCRP).\n3. Preserve tx hashes, wallet addresses, chats, UTR/screenshots.\n4. If an exchange is involved, send a freeze request to their compliance desk (use Trace → Report & freeze drafts).\n\nCryptoTrace can pre-fill helpline and exchange emails after a wallet trace.";
+    }
+    if (/golden|hour|freeze|recover|recovery/.test(s)) {
+      return "Golden hour = the short window after funds hit an exchange/VASP deposit address when a freeze may still work.\n\nAfter withdrawal to an external wallet, recovery chance drops sharply.\n\nCryptoTrace prioritizes: detect VASP sink → raise alert → draft freeze email + 1930 path.";
+    }
+    if (/trace|graph|wallet|hop|layer|vasp|exchange|blockchain/.test(s)) {
+      return "Wallet tracing expands on-chain transfers from a reported address, builds a hop graph, and looks for exchange-labelled sinks.\n\nRisk signals may include: rapid fan-out, peel-chains, short-lived burners, registry hits.\n\nOpen Trace & live graph, paste a 0x address, Run trace — you'll get score, animated graph, full tx history, and complaint drafts.";
+    }
+    if (/invest|task|scam|sextort|ransom|phish|darknet/.test(s)) {
+      return "Common crypto-linked frauds:\n• Investment / trading app scams\n• Task-based deposit traps\n• Sextortion for crypto payment\n• Ransomware\n• Phishing / fake sites\n• Darknet-related settlements\n\nImmediate steps: stop paying, save evidence, call 1930, run the wallet through Trace + Safety check, do not share seed phrases.";
+    }
+    if (/seed|private key|otp|password/.test(s)) {
+      return "Never share seed phrases, private keys, or OTPs with anyone — including people claiming to be support or police.\n\nCryptoTrace never asks for keys. If you already exposed a seed, move remaining assets from a clean device to a new wallet and report via 1930.";
+    }
+    if (/hello|hi\b|hey|help/.test(s)) {
+      return "I can help with:\n• What to do after a crypto scam\n• Reporting (1930, NCRP)\n• How tracing & golden-hour freezes work\n• Using CryptoTrace sections\n\nTry a quick question chip above, or type your situation.";
+    }
+    if (/extension|browser|safety check|registry/.test(s)) {
+      return "Prevention tools on this platform:\n• Pre-tx safety check — look up an address before sending\n• Browser extension demo — warns on flagged addresses on web pages\n• Public registry — prior fraud-flagged wallets + case-law cards\n\nOpen those sections from the left menu.";
+    }
+    return "Here's practical guidance:\n\n1. If funds were just sent, call 1930 and file on cybercrime.gov.in immediately.\n2. Use Trace with the suspect wallet to get hops, risk score, and exchange path.\n3. Use Report & freeze drafts for helpline + VASP compliance.\n4. Never send more funds or share seed phrases.\n\nAsk a more specific question (e.g. investment scam steps, how tracing works, or golden hour) for a focused answer.";
+  }
+
+  function handleChatSend() {
+    var q = chatInput.value.trim();
+    if (!q) return;
+    addBubble(q, 'user');
+    chatInput.value = '';
+    var typing = addBubble('Thinking…', 'bot');
+    typing.classList.add('chat-typing');
+    setTimeout(function() {
+      typing.remove();
+      botSay(aiReply(q));
+    }, 400);
+  }
+
+  if (chatSend) chatSend.addEventListener('click', handleChatSend);
+  chatInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); handleChatSend(); }
+  });
+  document.querySelectorAll('.quick-q').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      chatInput.value = btn.getAttribute('data-q') || '';
+      handleChatSend();
+    });
+  });
+})();
+
+</script>
+
+</body>
+</html>
